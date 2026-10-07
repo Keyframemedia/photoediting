@@ -34,6 +34,9 @@ DAY = {
     "sky_sat": 0.0, "sky_deepen": 0.015, "green_warm_deg": -6.0, "green_sat": 0.05,
     "orange_protect": 0.5,
     "lut": "day", "lut_strength": 1.0,
+    # drone shots (pipeline.finish): deeper and richer than rooms, as delivered;
+    # fitted on the aerial pairs alone
+    "aerial": {"key": 0.22, "contrast": 0.30, "vibrance": 0.45, "saturation": 0.04},
     # sharpening
     "sharpen_radius": 0.9, "sharpen_amount": 0.55, "web_sharpen_radius": 0.6,
     "web_sharpen_amount": 0.55, "sharpen_threshold": 0.006,
@@ -59,6 +62,7 @@ NIGHT.update({
     # held from the earlier day look this was built on
     "sky_global": 0.9, "sky_global_hi": 2.4, "sky_global_white": 0.6, "white_target": 0.96,
     "max_white_stretch": 1.12, "pivot": 0.42, "shoulder": 0.06, "lut": None, "view_clarity": 0.0,
+    "aerial": None,
 })
 
 # Twilight: Keyframe's delivered dusk look, fitted on Water Lily (dusk) the same way

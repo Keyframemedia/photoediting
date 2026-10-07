@@ -129,6 +129,8 @@ def finish(hdr: np.ndarray, ref_meta: dict, p: dict, info: dict | None = None) -
         hdr, info["sky"] = skymod.replace_sky(hdr, None if p["sky"] is True else p["sky"],
                                               brightness=p.get("sky_brightness", 1.0))
     is_aerial = str(ref_meta.get("Make", "")).upper().startswith("DJI")
+    if is_aerial and p.get("aerial"):
+        p = {**p, **p["aerial"]}  # drone shots: their own tone (see presets)
     ginfo = {}
     if p.get("upright", True) and not is_aerial:
         hdr, ginfo = geometry.upright(hdr, ref_meta, p)

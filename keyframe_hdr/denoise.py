@@ -26,9 +26,21 @@ def chroma_nr(rgb: np.ndarray, strength: float = 1.0) -> np.ndarray:
     guide = np.log2(Ys).astype(np.float32)
     r = max(2, int(round(3 * strength * max(rgb.shape[:2]) / 4000)))
     out = np.empty_like(rgb)
+    k = np.ones((2 * r + 1, 2 * r + 1), np.uint8)
     for c in range(3):
-        ratio = (rgb[..., c] / Ys).astype(np.float32)
-        out[..., c] = guided_filter(guide, ratio, r, 0.02) * Ys
+        ratio = np.clip(rgb[..., c] / Ys, 0, 4).astype(np.float32)
+        f = guided_filter(guide, ratio, r, 0.02)
+        # A guided filter fits a linear model per window and can extrapolate far
+        # outside the data at extreme-contrast edges (a sunlit frame against deep
+        # shade), which shows as box-shaped neon patches. Keep every output inside
+        # the range of chromaticities actually present in its window.
+        np.clip(f, cv2.erode(ratio, k), cv2.dilate(ratio, k), out=f)
+        # and never move a pixel's chromaticity far from its own value
+        np.clip(f, ratio - 0.3, ratio + 0.3, out=f)
+        out[..., c] = f
+    # chroma NR must not change brightness: renormalise to the original luminance
+    lum = out @ np.array([0.2627, 0.6780, 0.0593], dtype=np.float32)
+    out *= (Ys / np.maximum(lum, 1e-6))[..., None]
     return np.maximum(out, 0)
 
 

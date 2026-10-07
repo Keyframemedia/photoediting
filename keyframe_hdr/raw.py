@@ -65,6 +65,12 @@ def decode(path: str, meta: dict, nef_meta: dict | None = None, half: bool = Fal
         # Normalise multipliers by their max so nothing clips when WB is applied
         # (HighlightMode.Ignore keeps the full range); data is then scaled back up.
         mmax = max(cam_wb)
+        # Clipping measured on the raw sensor sites, before demosaicing: a clipped
+        # site corrupts the colour of its neighbours during interpolation even
+        # where the interpolated values sit below the clip point. Read before
+        # postprocess(): for some DNGs LibRaw shrinks the raw buffer in place
+        # when it renders at half size.
+        cfa_clip = (r.raw_image_visible >= 0.98 * float(r.white_level)).astype(np.uint8)
         rgb = r.postprocess(
             output_color=rawpy.ColorSpace.raw, gamma=(1, 1), no_auto_bright=True,
             output_bps=16, user_wb=cam_wb + [cam_wb[1]],
@@ -74,11 +80,6 @@ def decode(path: str, meta: dict, nef_meta: dict | None = None, half: bool = Fal
         )
         cm = r.color_matrix[:, :3].astype(np.float32)
         sizes = r.sizes
-        # Clipping measured on the raw sensor sites, before demosaicing: a clipped
-        # site corrupts the colour of its neighbours during interpolation even
-        # where the interpolated values sit below the clip point.
-        cfa = r.raw_image_visible
-        cfa_clip = (cfa >= 0.98 * float(r.white_level)).astype(np.uint8)
     rgb = rgb.astype(np.float32) * (1.0 / 65535.0)
     # Per-channel clip level after WB normalisation by the max multiplier.
     clip_lvl = np.array([w / mmax for w in cam_wb], dtype=np.float32)

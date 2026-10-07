@@ -105,12 +105,19 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = 
     # 5-6. per-pixel stages in strips, written back into rgb's buffer:
     #      luminance -> colour (Oklab) -> gamut map -> sRGB encode
     desat = p.get("desat_highlights", 0.6)
+    house = None
+    if p.get("lut"):  # the house colour rendering, learned from delivered images (lut.py)
+        from . import lut as lutmod
+        house = lutmod.load(p["lut"])
+        info["lut"] = p["lut"] if house is not None else f"missing:{p['lut']}"
     for r0 in range(0, rgb.shape[0], STRIP):
         sl = slice(r0, r0 + STRIP)
         c = tonemap.apply_luminance(rgb[sl], Y[sl], Yd_lin[sl], desat_highlights=desat, ratio_ref=ratio_ref)
         lab = grade.colour_grade(grade.rec2020_to_oklab(c), p, sky=None if sky is None else sky[sl])
         c = grade.gamut_map_srgb(grade.oklab_to_rec2020(lab).astype(np.float32))
         rgb[sl] = tonemap.srgb_encode(np.clip(c, 0, 1))
+        if house is not None:
+            lutmod.apply(rgb[sl], house, p.get("lut_strength", 1.0))
     v = rgb
     if p.get("despeckle", False):
         v, info["specks"] = grade.suppress_specular_specks(v)

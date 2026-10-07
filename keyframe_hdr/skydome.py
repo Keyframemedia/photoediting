@@ -33,7 +33,7 @@ RES = os.environ.get("KF_SKY_RES", "16k")
 
 # option -> candidate domes; a property gets one of them (stable per job seed)
 LIBRARY = {
-    "clouds": ["kloofendal_48d_partly_cloudy_puresky", "kloofendal_38d_partly_cloudy_puresky"],
+    "clouds": ["kloofendal_48d_partly_cloudy_puresky"],
     "clear": ["syferfontein_18d_clear_puresky", "kloofendal_43d_clear_puresky"],
     "twilight_clear": ["rosendal_park_sunset_puresky"],
     "twilight_purple": ["qwantani_dusk_2_puresky"],

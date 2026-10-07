@@ -1,0 +1,11 @@
+numpy>=2.0
+opencv-python-headless>=4.10
+rawpy>=0.22
+scipy
+numexpr
+pillow
+# sky replacement + reflection retouching
+torch
+torchvision
+transformers
+onnxruntime

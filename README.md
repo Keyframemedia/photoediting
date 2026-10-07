@@ -22,6 +22,17 @@ output/
   edits.json             (optional, you write it) per-image overrides - see below
 ```
 
+## Working with Claude
+
+1. Share a Dropbox folder link of the bracketed RAWs. Say **day** or **night**, and whether any
+   skies should be replaced.
+2. Claude downloads the folder, runs the pipeline, then reviews every frame itself. It checks
+   reflections (glass, mirrors, TVs) and shadows for the photographer, and anyone else, and
+   adds the removals to `jobs/<date>_<place>/edits.json`.
+3. You get a private review gallery (before/after slider). Mark images Approve or Needs changes
+   and leave a note.
+4. Claude reads the notes back, re-edits only those images, and delivers the full-res and web JPEGs.
+
 ## What happens to each bracket
 
 | Stage | What it does |

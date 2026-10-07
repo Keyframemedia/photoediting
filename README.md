@@ -9,7 +9,8 @@ natural skies. Nothing about the property is changed. The only content edits are
 you ask for: sky replacement, and removing photographers/people from reflections.
 
 ```
-python -m keyframe_hdr <input_folder> <output_folder> --style day     # or --style night
+python -m keyframe_hdr <input_folder> <output_folder> --style day --sky clouds --max-mb 10
+python -m keyframe_hdr <input_folder> <output_folder> --style twilight --look purple --sky clear
 ```
 
 Output:
@@ -22,9 +23,44 @@ output/
   edits.json             (optional, you write it) per-image overrides - see below
 ```
 
-## Working with Claude
+## Photo edits in the Keyframe portal (the everyday way)
 
-1. Share a Dropbox folder link of the bracketed RAWs. Say **day** or **night**, and whether any
+Shoots are sent for editing from the portal: **book.keyframemedia.co.nz → Admin → Deliveries →
+Photo edits**. It needs Deliveries access.
+
+1. Press **New shoot** and fill in:
+   - the property;
+   - the Dropbox folder link of the bracketed RAWs (Canon, Nikon or DJI);
+   - **Daytime** or **Twilight**, and the options:
+     - **Daytime** sky: original, blue with clouds, or clear blue;
+     - **Twilight**: natural or purple dusk, the lights enhancement on or off, and the sky
+       (original, clear dusk or dusk with clouds).
+2. The portal's `photo-edit-start` function fires the **Keyframe editing worker** Routine.
+   - That's a fresh Claude Code cloud session per shoot, so several shoots edit at once.
+   - It follows [`worker/WORKER.md`](worker/WORKER.md):
+     - installs the tools (`scripts/setup_worker.sh`) and downloads the RAWs;
+     - edits two brackets at a time;
+     - checks every frame for people and photographers in reflections and removes them.
+   - `worker/run_job.py` reports to the portal's `photo-edit-worker` function with a one-time
+     token per job:
+     - stage, progress and ETA every few minutes;
+     - a check for the Stop button;
+     - uploads of the finished JPEGs and previews to the private `photo-edits` bucket.
+3. The shoot moves along **Uploaded → Editing → Edit complete**. Filters hide old jobs, and
+   **Archive** tidies finished ones.
+4. **Download all** saves every full-resolution JPEG (each under 10 MB) as one folder (.zip).
+
+A 50-scene shoot takes about 2 hours, plus 10-15 minutes of setup.
+
+Portal side (repo `Keyframemedia/NEW-keyframe-portal`):
+- `src/components/admin/PhotoEdits.tsx`;
+- migrations `20261016000001_photo_edits.sql` and `…02_photo_edits_worker_token.sql`;
+- edge functions `photo-edit-start` and `photo-edit-worker`;
+- the one secret: `CLAUDE_ROUTINE_TOKEN`, the routine's API trigger token.
+
+## Working with Claude directly
+
+1. Share a Dropbox folder link of the bracketed RAWs. Say **day** or **twilight**, and whether any
    skies should be replaced.
 2. Claude downloads the folder, runs the pipeline, then reviews every frame itself. It checks
    reflections (glass, mirrors, TVs) and shadows for the photographer, and anyone else, and
@@ -51,10 +87,45 @@ Everything is in `keyframe_hdr/presets.py` (`DAY`, `NIGHT`).
 ## Styles
 
 - **day**: the signature daylight look described above. Tuned on a real 50-scene shoot.
-- **night**: twilight/dusk. White balance is fixed rather than auto, so interiors glow warm
-  against a deep blue sky. It has a darker key, a wider exposure range for light fittings,
-  stronger noise reduction and a richer sky. **Tuned blind.** It needs one real twilight set
-  to finalise.
+- **twilight** (`night` is an alias): white balance is fixed rather than auto, so interiors glow
+  warm against a deep blue sky. It has a darker key, a wider exposure range for light fittings,
+  stronger noise reduction and a richer sky.
+  - `--look purple` turns only the sky toward violet.
+  - Lights enhancement (on by default; `--no-lights` turns it off) finds every lamp, downlight,
+    wall light and lit window, adds a soft glow in its own colour, and lifts the pools of light
+    they throw.
+  - **Tuned blind.** It needs one real twilight set to finalise.
+
+## Sky replacement (`--sky clouds|clear`)
+
+Skies come from 360-degree HDR sky domes: CC0 "pure skies" from Poly Haven, free for commercial
+use with no attribution. Every exterior of a shoot gets the **same** sky, seen from that shot's
+own direction, so the clouds change naturally from frame to frame instead of repeating.
+
+- **Drone shots:** the gimbal's compass heading turns the dome.
+- **Canon/Nikon (no compass):** shots are spread around it with a golden-angle sequence, keeping
+  the sun behind the photographer.
+- **Horizon:** the camera model from the upright step puts the dome's horizon on the real
+  horizon.
+- **Compositing:**
+  - the sky goes in in linear light, before the grade;
+  - edges are decontaminated, so no halo of the old sky survives around rooflines and posts;
+  - a colour check learned from the image's own sky keeps soffits and pale walls from being
+    mistaken for sky.
+
+| Option | Daytime dome | Twilight dome |
+|---|---|---|
+| clouds | Kloofendal 48d partly cloudy / Kloofendal 38d | Belfast sunset |
+| clear | Syferfontein 18d clear / Kloofendal 43d clear | Rosendal park sunset, or Qwantani dusk 2 with the purple look |
+
+The domes download on first use (~250 MB each at 16k) into `~/.cache/keyframe_skies`.
+
+## Output size
+
+`--max-mb 10` caps every full-resolution JPEG:
+- quality steps down from 95 (4:4:4) only as far as an image needs;
+- busy 45 MP frames land at about q90-91, which is visually lossless;
+- simpler frames stay at q95.
 
 ## Per-image edits (`edits.json`)
 
@@ -101,6 +172,10 @@ presets, in-place rendering and bracket grouping.
 
 ## Setup (Linux)
 
+`bash scripts/setup_worker.sh` does all of this on a fresh Ubuntu container and skips whatever is
+already installed. The studio's worker sessions run it first, which takes about 10-15 minutes.
+By hand:
+
 ```bash
 pip install -r requirements.txt
 sudo apt install libimage-exiftool-perl wine wine64 wine32:i386 xvfb
@@ -131,7 +206,10 @@ and a 50-scene shoot takes about 1.5-2 hours. `--half` gives a quick quarter-siz
 
 - **Inpainted areas** are a little softer than their surroundings at 100%, because LaMa works
   at 512 px. They're invisible at listing sizes. Reflections in glass hide it best.
-- **Night preset** hasn't been tuned on real twilight brackets yet.
+- **Twilight preset** (looks and lights enhancement) hasn't been tuned on real twilight brackets
+  yet.
+- **Canon CR3/CR2** go through the same Adobe DNG Converter step as Nikon, which gives Adobe's
+  lens corrections. This hasn't been run on a real Canon shoot yet.
 - **Sky replacement** works best from a curated library of clean, ungraded sky photos. Skies cut
   from finished images carry their grade with them.
 - **Nikon HE\*** files need the Adobe DNG Converter step (Windows app under Wine).

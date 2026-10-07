@@ -232,8 +232,17 @@ def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
     metas = raw.exif(files)
     for m in metas:
         m["path"] = os.path.join(m["Directory"], m["FileName"])
+    # brackets come from the cameras' own capture times/settings, so group first
+    # and convert only what this run will edit (a re-run of two images converts six files)
+    groups = merge.group_brackets(metas)
+
+    def wanted(g):
+        names = [os.path.splitext(m["FileName"])[0] for m in g]
+        return not only or any(o in n for o in only for n in names)
+
+    sel = [m for g in groups if wanted(g) for m in g]
     have_conv = converter_available()
-    conv = [m["path"] for m in metas if should_convert(m, have_conv)]
+    conv = [m["path"] for m in sel if should_convert(m, have_conv)]
     if conv:
         log(f"converting {len(conv)} camera RAWs to DNG (Adobe DNG Converter)")
         mapping = convert_to_dng(conv, os.path.join(work_dir, "dng"))
@@ -241,7 +250,7 @@ def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
         if missing:
             log(f"WARNING: {len(missing)} files failed to convert: {[os.path.basename(x) for x in missing[:5]]}")
         dmeta = {os.path.basename(d): x for d, x in zip(mapping.values(), raw.exif(list(mapping.values())))}
-        for m in metas:
+        for m in sel:
             if m["path"] in mapping:
                 d = mapping[m["path"]]
                 dm = dmeta.get(os.path.basename(d), {})
@@ -251,10 +260,13 @@ def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
                 for k in ("ImageWidth", "ImageHeight"):
                     if k in dm:
                         m[k] = dm[k]
+            elif m["path"] in missing and not needs_conversion(m):
+                m["decode_path"] = m["path"]  # converter failed but LibRaw can read it: decode directly
     for m in metas:
-        m.setdefault("decode_path", m["path"])
-    metas = [m for m in metas if os.path.exists(m["decode_path"])]
-    groups = merge.group_brackets(metas)
+        if "decode_path" not in m and not (m in sel and m["path"] in conv):
+            m["decode_path"] = m["path"]
+    # frames that could not be prepared drop out; bracket numbering stays stable
+    groups = [[m for m in g if m.get("decode_path") and os.path.exists(m["decode_path"])] for g in groups]
     log(f"{len(files)} files -> {len(groups)} brackets ({style})")
     # drones carry a compass: the first drone shot sets the sky dome's reference yaw
     yaws = [m.get("GimbalYawDegree", m.get("FlightYawDegree")) for g in groups for m in g]
@@ -266,6 +278,8 @@ def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
     edits = json.load(open(edits_path)) if os.path.exists(edits_path) else {}
     tasks = []
     for i, g in enumerate(groups, 1):
+        if not g:
+            continue
         names = [os.path.splitext(m["FileName"])[0] for m in sorted(g, key=raw.relative_exposure)]
         key = os.path.splitext(sorted(g, key=lambda m: merge._ts(m))[0]["FileName"])[0]
         if only and not any(o in n for o in only for n in names):

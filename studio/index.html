@@ -1,0 +1,619 @@
+<title>Keyframe Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,500;6..96,600&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+/* Layout: a gallery-wall neutral with brass for the brand; two columns on desktop
+   (new shoot | pipeline board), one column on phones. Day shoots carry a sun amber,
+   twilight shoots a dusk violet. */
+:root {
+  --bg: #f2f3f5; --surface: #ffffff; --raised: #f8f9fa; --ink: #15171c; --muted: #646b78;
+  --line: #e0e3e8; --brass: #9a6b30; --brass-ink: #ffffff; --brass-soft: #f4ebdf;
+  --day: #c98a1c; --day-soft: #fbf1df; --dusk: #6b55c9; --dusk-soft: #eeebfa;
+  --ok: #2c8556; --ok-soft: #e3f3ea; --warn: #b7791f; --bad: #c0412f; --bad-soft: #fbe9e6;
+  --run: #2f6fb8; --run-soft: #e5eef9; --shadow: 0 1px 2px rgba(20,24,32,.06), 0 4px 16px rgba(20,24,32,.05);
+  --display: "Bodoni Moda", "Didot", "Bodoni 72", Georgia, serif;
+  --body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111317; --surface: #191c22; --raised: #1f232a; --ink: #eceef2; --muted: #9aa1ad;
+  --line: #2b3038; --brass: #d3a463; --brass-ink: #1a1408; --brass-soft: #2d261c;
+  --day: #e6ab47; --day-soft: #2e2617; --dusk: #a593f0; --dusk-soft: #25213a;
+  --ok: #5cc28c; --ok-soft: #17291f; --warn: #e1a446; --bad: #ef7a66; --bad-soft: #321b18;
+  --run: #6fa8ec; --run-soft: #172434; --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111317; --surface: #191c22; --raised: #1f232a; --ink: #eceef2; --muted: #9aa1ad;
+  --line: #2b3038; --brass: #d3a463; --brass-ink: #1a1408; --brass-soft: #2d261c;
+  --day: #e6ab47; --day-soft: #2e2617; --dusk: #a593f0; --dusk-soft: #25213a;
+  --ok: #5cc28c; --ok-soft: #17291f; --warn: #e1a446; --bad: #ef7a66; --bad-soft: #321b18;
+  --run: #6fa8ec; --run-soft: #172434; --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); }
+.wrap { max-width: 1280px; margin: 0 auto; padding-inline: 16px; padding-block: 18px 48px; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+header.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding-block: 6px 18px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand h1 { font-family: var(--display); font-weight: 600; font-size: 28px; letter-spacing: .01em; margin: 0; }
+.brand span { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.meter { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); }
+.meter .bar { width: 120px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter .bar i { display: block; height: 100%; background: var(--brass); width: 0; }
+
+.grid { display: grid; grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
+.newshoot { padding: 20px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); }
+@media (max-width: 900px) { .newshoot { position: static; } }
+.newshoot h2 { font-family: var(--display); font-weight: 500; font-size: 22px; margin: 0 0 4px; }
+.newshoot p.lede { margin: 0 0 16px; color: var(--muted); font-size: 13.5px; }
+form { display: grid; gap: 14px; }
+label.f { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
+label.f small { font-weight: 400; color: var(--muted); }
+input[type=text], input[type=url], select, textarea { width: 100%; border: 1px solid var(--line); background: var(--raised);
+  border-radius: 8px; padding: 9px 11px; font-size: 14px; }
+textarea { resize: vertical; min-height: 64px; }
+input:focus, select:focus, textarea:focus { border-color: var(--brass); outline: none; box-shadow: 0 0 0 3px var(--brass-soft); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; background: var(--raised); border: 1px solid var(--line); border-radius: 9px; }
+.seg button { border: 0; background: transparent; border-radius: 6px; padding: 8px; font-weight: 600; font-size: 14px; color: var(--muted);
+  display: flex; align-items: center; justify-content: center; gap: 8px; }
+.seg button[aria-pressed=true] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.seg button .dot { width: 9px; height: 9px; border-radius: 50%; }
+.dot.day { background: var(--day); } .dot.dusk { background: var(--dusk); }
+.opts { display: grid; gap: 12px; padding: 12px; border-radius: 8px; border: 1px dashed var(--line); }
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; }
+.check input { margin-top: 3px; accent-color: var(--brass); }
+.primary { background: var(--brass); color: var(--brass-ink); border: 0; border-radius: 8px; padding: 11px 16px; font-weight: 700; font-size: 14.5px; }
+.primary:disabled { opacity: .55; cursor: default; }
+.formnote { font-size: 12.5px; color: var(--muted); margin: 0; }
+.formmsg { font-size: 13px; margin: 0; }
+.formmsg.bad { color: var(--bad); } .formmsg.ok { color: var(--ok); }
+
+.boardhead { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.pipeline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.stagechip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--surface);
+  border-radius: 999px; padding: 6px 12px; font-size: 13.5px; font-weight: 600; color: var(--muted); }
+.stagechip .n { font-family: var(--mono); font-size: 12px; background: var(--raised); border-radius: 999px; padding: 0 7px; color: var(--ink); }
+.stagechip[aria-pressed=true] { border-color: var(--ink); color: var(--ink); }
+.arrow { color: var(--muted); font-size: 12px; }
+.sep { width: 1px; height: 22px; background: var(--line); margin-inline: 4px; }
+.search { min-width: 0; flex: 1 1 180px; max-width: 260px; }
+
+.jobs { display: grid; gap: 14px; }
+.empty { padding: 36px 24px; text-align: center; color: var(--muted); }
+.empty h3 { font-family: var(--display); font-weight: 500; color: var(--ink); font-size: 21px; margin: 0 0 6px; }
+.job { padding: 16px 18px; display: grid; gap: 12px; }
+.job.archived { opacity: .82; }
+.jtop { display: flex; gap: 14px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.jtitle { min-width: 0; flex: 1 1 260px; }
+.jtitle h3 { font-family: var(--display); font-weight: 600; font-size: 21px; line-height: 1.2; margin: 0; overflow-wrap: anywhere; text-wrap: balance; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; font-size: 12.5px; color: var(--muted); align-items: center; }
+.tag { display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; padding: 2px 8px; font-weight: 600; font-size: 12px; }
+.tag.day { background: var(--day-soft); color: var(--day); } .tag.dusk { background: var(--dusk-soft); color: var(--dusk); }
+.tag.plain { background: var(--raised); color: var(--muted); border: 1px solid var(--line); }
+.status { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 700; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.st-uploaded { background: var(--raised); color: var(--muted); border: 1px solid var(--line); }
+.st-editing { background: var(--run-soft); color: var(--run); }
+.st-complete { background: var(--ok-soft); color: var(--ok); }
+.st-failed { background: var(--bad-soft); color: var(--bad); }
+.st-editing::before { animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .st-editing::before { animation: none; } }
+
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.step { font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: grid; gap: 5px; }
+.step i { height: 4px; border-radius: 2px; background: var(--line); display: block; position: relative; overflow: hidden; }
+.step.done i { background: var(--ink); }
+.step.now i::after { content: ""; position: absolute; inset: 0; width: var(--p, 0%); background: var(--run); }
+.step.now.c i::after { background: var(--ok); }
+.step.now { color: var(--ink); font-weight: 600; }
+.progress { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; font-size: 13.5px; }
+.progress .stage { font-weight: 600; }
+.progress .sub { color: var(--muted); font-size: 12.5px; }
+.err { background: var(--bad-soft); color: var(--bad); border-radius: 8px; padding: 9px 12px; font-size: 13px; overflow-wrap: anywhere; }
+.notice { background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; font-size: 13px; color: var(--muted); }
+
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.thumbs button { padding: 0; border: 0; background: var(--raised); border-radius: 5px; overflow: hidden; aspect-ratio: 3 / 2; position: relative; max-width: 100%; }
+.thumbs img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumbs .more { display: grid; place-items: center; font-size: 13px; font-weight: 700; color: var(--muted); border: 1px dashed var(--line); background: transparent; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 7px 12px; font-size: 13.5px; font-weight: 600; }
+.btn:hover { border-color: var(--muted); }
+.btn.main { background: var(--brass); color: var(--brass-ink); border-color: var(--brass); }
+.btn.danger { color: var(--bad); }
+.btn:disabled { opacity: .5; cursor: default; }
+a.btn { text-decoration: none; display: inline-flex; align-items: center; color: var(--ink); }
+a.btn.main { color: var(--brass-ink); }
+.linkish { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.linkish a { color: inherit; }
+.confirm { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
+
+.lightbox { position: fixed; inset: 0; background: rgba(8,9,12,.88); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; z-index: 20;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px calc(env(safe-area-inset-bottom, 0px) + 14px); gap: 10px; }
+.lightbox .lbbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: #e9ebef; font-size: 14px; }
+.lightbox .lbbar b { font-family: var(--mono); font-weight: 500; font-size: 13px; overflow-wrap: anywhere; }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; margin: auto; display: block; }
+.lightbox .lbnav { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+.lightbox .btn { background: #1c1f25; color: #e9ebef; border-color: #3a3f48; }
+.lightbox .btn.main { background: #d3a463; color: #1a1408; border-color: #d3a463; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); background: var(--ink); color: var(--bg);
+  padding: 9px 16px; border-radius: 8px; font-size: 13.5px; z-index: 30; max-width: calc(100% - 32px); }
+.offline { margin-bottom: 16px; }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><h1>Keyframe Studio</h1><span>HDR editing</span></div>
+    <div class="meter" id="meter" hidden><span id="meterText">Storage</span><span class="bar"><i id="meterBar"></i></span></div>
+  </header>
+
+  <div class="notice offline" id="offline" hidden>This page needs to be opened in claude.ai, signed in as Keyframe Media, to start and track edits.</div>
+
+  <div class="grid">
+    <section class="panel newshoot" aria-labelledby="nsTitle">
+      <h2 id="nsTitle">New shoot</h2>
+      <p class="lede">Link the Dropbox folder of bracketed RAWs from Canon, Nikon or DJI, then choose the look.</p>
+      <form id="newForm" novalidate>
+        <label class="f" for="fProperty">Property
+          <input type="text" id="fProperty" placeholder="e.g. 14 Lakeview Terrace, Wānaka" autocomplete="off" required>
+        </label>
+        <label class="f" for="fDropbox">Dropbox folder link <small>Share the folder in Dropbox (Copy link) and paste it here.</small>
+          <input type="url" id="fDropbox" placeholder="https://www.dropbox.com/scl/fo/…" autocomplete="off" required>
+        </label>
+        <div class="f" role="group" aria-label="Shoot type">
+          <span style="font-size:13px;font-weight:600">Shoot</span>
+          <div class="seg" id="fStyle">
+            <button type="button" id="styleDay" data-style="day" aria-pressed="true"><span class="dot day"></span>Daytime</button>
+            <button type="button" id="styleDusk" data-style="twilight" aria-pressed="false"><span class="dot dusk"></span>Twilight</button>
+          </div>
+        </div>
+        <div class="opts" id="dayOpts">
+          <label class="f" for="fDaySky">Sky
+            <select id="fDaySky">
+              <option value="original">Original sky</option>
+              <option value="clouds">Replace: blue sky with clouds</option>
+              <option value="clear">Replace: clear blue sky, no clouds</option>
+            </select>
+          </label>
+        </div>
+        <div class="opts" id="duskOpts" hidden>
+          <label class="f" for="fLook">Twilight look
+            <select id="fLook">
+              <option value="natural">Natural dusk blue</option>
+              <option value="purple">Purple dusk</option>
+            </select>
+          </label>
+          <label class="f" for="fDuskSky">Sky
+            <select id="fDuskSky">
+              <option value="original">Original sky</option>
+              <option value="clear">Replace: clear dusk glow</option>
+              <option value="clouds">Replace: dusk with clouds</option>
+            </select>
+          </label>
+          <label class="check" for="fLights"><input type="checkbox" id="fLights" checked>
+            <span>Enhance all interior and exterior lights</span></label>
+        </div>
+        <label class="f" for="fNotes">Notes for the editor <small>Optional, e.g. “remove the hose on the lawn in the backyard shots”.</small>
+          <textarea id="fNotes" rows="2"></textarea>
+        </label>
+        <button class="primary" id="fSubmit" type="submit">Upload and start editing</button>
+        <p class="formmsg" id="formMsg" role="status"></p>
+        <p class="formnote">Replaced skies follow each camera angle, so the clouds change naturally from shot to shot. Every image comes back as a full-resolution JPEG under 10 MB, with photographers and people removed from reflections. A 50-image shoot takes about 2 hours.</p>
+      </form>
+    </section>
+
+    <section aria-labelledby="boardTitle">
+      <h2 id="boardTitle" hidden>Shoots</h2>
+      <div class="boardhead">
+        <div class="pipeline" id="filters" role="toolbar" aria-label="Filter shoots">
+          <button class="stagechip" data-f="active" aria-pressed="true">All active <span class="n" id="cActive">0</span></button>
+          <span class="sep" aria-hidden="true"></span>
+          <button class="stagechip" data-f="uploaded" aria-pressed="false">Uploaded <span class="n" id="cUploaded">0</span></button>
+          <span class="arrow" aria-hidden="true">→</span>
+          <button class="stagechip" data-f="editing" aria-pressed="false">Editing <span class="n" id="cEditing">0</span></button>
+          <span class="arrow" aria-hidden="true">→</span>
+          <button class="stagechip" data-f="complete" aria-pressed="false">Edit complete <span class="n" id="cComplete">0</span></button>
+          <span class="sep" aria-hidden="true"></span>
+          <button class="stagechip" data-f="archived" aria-pressed="false">Archived <span class="n" id="cArchived">0</span></button>
+        </div>
+        <input type="text" class="search" id="search" placeholder="Search properties" aria-label="Search properties">
+      </div>
+      <div class="jobs" id="jobs">
+        <div class="panel empty" id="emptyState">
+          <h3>No shoots yet</h3>
+          <p>Paste a Dropbox link under New shoot to start your first edit. Each shoot moves from Uploaded to Editing to Edit complete here, with its images as they finish.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Image preview">
+  <div class="lbbar"><b id="lbName"></b><button class="btn" id="lbClose">Close</button></div>
+  <img id="lbImg" alt="">
+  <div class="lbnav">
+    <button class="btn" id="lbPrev">Previous</button>
+    <button class="btn main" id="lbSave">Download full resolution</button>
+    <a class="btn main" id="lbLink" target="_blank" rel="noopener" hidden>Open delivery page</a>
+    <button class="btn" id="lbNext">Next</button>
+  </div>
+</div>
+<div class="toast" id="toast" hidden role="status"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const state = { jobs: [], filter: "active", q: "", style: "day", triggerId: null, uid: null,
+                  busy: {}, confirm: {}, expanded: {}, zip: {} };
+  let db = null, mcp = null, assets = null, downloads = null;
+  const STALL_MIN = 30;
+  const SKY_DAY = { original: "Original sky", clouds: "Sky: clouds", clear: "Sky: clear blue" };
+  const SKY_DUSK = { original: "Original sky", clear: "Sky: clear dusk", clouds: "Sky: dusk clouds" };
+
+  // ---------- helpers
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }); } catch { return ""; } };
+  const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
+  const ago = (iso) => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : Math.round(m / 60) + " h ago"; };
+  const mb = (b) => (b / 1e6).toFixed(b >= 1e8 ? 0 : 1) + " MB";
+  const gb = (b) => (b / 1e9).toFixed(2) + " GB";
+  function toast(msg) { const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 4200); }
+  function slug(s) { return s.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "shoot"; }
+  function safeFile(s) { return s.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 120) || "Keyframe"; }
+  const blobUrl = (id) => "/_blob/" + id;
+  function stalled(j) { return j.status === "editing" && j.heartbeat && (Date.now() - new Date(j.heartbeat).getTime()) / 60000 > STALL_MIN; }
+
+  // ---------- form
+  function setStyle(s) {
+    state.style = s;
+    $("styleDay").setAttribute("aria-pressed", s === "day");
+    $("styleDusk").setAttribute("aria-pressed", s === "twilight");
+    $("dayOpts").hidden = s !== "day";
+    $("duskOpts").hidden = s === "day";
+    try { localStorage.setItem("kf-draft", JSON.stringify({ style: s })); } catch {}
+  }
+  $("styleDay").onclick = () => setStyle("day");
+  $("styleDusk").onclick = () => setStyle("twilight");
+  try { const d = JSON.parse(localStorage.getItem("kf-draft") || "{}"); if (d.style) setStyle(d.style); } catch {}
+
+  function formMsg(text, kind) { const m = $("formMsg"); m.textContent = text || ""; m.className = "formmsg" + (kind ? " " + kind : ""); }
+
+  $("newForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const property = $("fProperty").value.trim();
+    const dropbox = $("fDropbox").value.trim();
+    if (!property) { formMsg("Add the property name.", "bad"); $("fProperty").focus(); return; }
+    if (!/^https:\/\/(www\.)?dropbox\.com\//i.test(dropbox)) { formMsg("Paste a Dropbox share link (it starts with https://www.dropbox.com/).", "bad"); $("fDropbox").focus(); return; }
+    if (!db) { formMsg("Open this page in claude.ai to add shoots.", "bad"); return; }
+    const style = state.style;
+    const job = {
+      property, dropbox, style,
+      sky: style === "day" ? $("fDaySky").value : $("fDuskSky").value,
+      look: style === "day" ? null : $("fLook").value,
+      lights: style === "day" ? false : $("fLights").checked,
+      notes: $("fNotes").value.trim(),
+      status: "uploaded", archived: false, cancel: false,
+      stage: "Waiting for an editor", progress: { done: 0, total: 0 }, images: [],
+      createdAt: new Date().toISOString(), createdBy: state.uid || null,
+    };
+    const id = new Date().toISOString().slice(0, 10) + "-" + slug(property) + "-" + Math.random().toString(36).slice(2, 6);
+    $("fSubmit").disabled = true; formMsg("Saving…");
+    try {
+      await db.collection("jobs").doc(id).set(job);
+      $("fProperty").value = ""; $("fDropbox").value = ""; $("fNotes").value = "";
+      formMsg("Added. Starting an editor…", "ok");
+      await startEditing(id, true);
+    } catch (err) {
+      formMsg(err && err.code === "quota_exceeded" ? "The shoot list is full. Archive and delete old shoots first." : "Couldn't save the shoot. Try again.", "bad");
+    } finally { $("fSubmit").disabled = false; }
+  });
+
+  // ---------- start / stop editing (fires the Keyframe worker routine)
+  async function startEditing(id, fromForm) {
+    const j = state.jobs.find((x) => x.id === id);
+    const ref = db.collection("jobs").doc(id);
+    if (!state.triggerId) {
+      const msg = "Editing isn't connected yet. Ask Claude to set up the Keyframe worker.";
+      fromForm ? formMsg(msg, "bad") : toast(msg);
+      return;
+    }
+    if (!mcp) {
+      const msg = "Starting edits needs the Claude Code Remote connector, which isn't available in this view.";
+      fromForm ? formMsg(msg, "bad") : toast(msg);
+      return;
+    }
+    state.busy[id] = true; render();
+    try {
+      const res = await mcp.callTool("Claude Code Remote", "fire_trigger",
+        { trigger_id: state.triggerId, text: "Keyframe job " + id });
+      const p = res && res.payload || {};
+      await ref.update({ stage: "Starting an editor", cancel: false, error: "",
+        lastStart: { at: new Date().toISOString(), ok: true, session: p.session_id || null } });
+      fromForm ? formMsg("Added. An editor is starting up; this shoot moves to Editing in a few minutes.", "ok") : toast("Editor starting");
+    } catch (err) {
+      const code = err && err.code;
+      const why = {
+        server_not_connected: "Add the Claude Code Remote connector in claude.ai Settings → Connectors, then press Start editing.",
+        needs_reauth: "Reconnect Claude Code Remote in claude.ai Settings → Connectors, then press Start editing.",
+        not_in_manifest: "Allow Claude Code Remote for this page (Permissions menu), then press Start editing.",
+        approval_required: "Approve the request to start editing, then press Start editing again.",
+        blocked_by_policy: "Your organisation's settings block starting edits from this page.",
+        tool_error: "The editor couldn't be started: " + (err && err.message || "unknown error"),
+      }[code] || "The editor didn't start (" + (code || "error") + "). Press Start editing to try again.";
+      try { await ref.update({ lastStart: { at: new Date().toISOString(), ok: false, code: code || "error" } }); } catch {}
+      fromForm ? formMsg(why, "bad") : toast(why);
+    } finally { state.busy[id] = false; render(); }
+  }
+
+  async function patch(id, data, okMsg) {
+    try { await db.collection("jobs").doc(id).update(data); if (okMsg) toast(okMsg); }
+    catch (err) { toast("Couldn't update the shoot. Try again."); }
+  }
+
+  async function deleteShoot(j) {
+    state.busy[j.id] = true; render();
+    try {
+      if (assets) for (const im of j.images || []) {
+        for (const a of [im.full, im.thumb]) if (a) { try { await assets.delete(a); } catch {} }
+      }
+      await db.collection("jobs").doc(j.id).delete();
+      toast("Shoot and its files deleted");
+      refreshMeter();
+    } catch { toast("Couldn't delete everything. Try again."); }
+    finally { state.busy[j.id] = false; state.confirm[j.id] = null; render(); }
+  }
+
+  // ---------- download all as one zip folder
+  async function downloadAll(j) {
+    if (!downloads) { toast("Downloads aren't available in this view."); return; }
+    if (typeof JSZip === "undefined") { toast("The zip tool didn't load. Reload the page and try again."); return; }
+    const ims = (j.images || []).filter((x) => x.full);
+    if (!ims.length) return;
+    const folder = safeFile(j.property);
+    const zip = new JSZip();
+    const dir = zip.folder(folder);
+    state.zip[j.id] = { done: 0, total: ims.length }; render();
+    try {
+      for (const im of ims) {
+        const r = await fetch(blobUrl(im.full));
+        if (!r.ok) throw new Error("fetch " + r.status);
+        dir.file(im.file || (folder + " " + String(im.n).padStart(2, "0") + ".jpg"), await r.blob(), { binary: true });
+        state.zip[j.id].done++; render();
+      }
+      state.zip[j.id].packing = true; render();
+      const blob = await zip.generateAsync({ type: "blob", compression: "STORE", streamFiles: true });
+      const res = await downloads.save({ filename: folder + ".zip", data: blob });
+      if (res && res.status === "saved") toast("Saved " + folder + ".zip");
+    } catch (err) {
+      const code = err && err.code;
+      toast(code === "declined" ? "Download cancelled" : code === "too_large" ? "Too large for this device. Download images one at a time from the preview." : "Download failed. Try again.");
+    } finally { delete state.zip[j.id]; render(); }
+  }
+
+  // ---------- lightbox
+  const lb = { job: null, i: 0 };
+  function openLb(j, i) { lb.job = j; lb.i = i; showLb(); $("lightbox").hidden = false; $("lbClose").focus(); }
+  function showLb() {
+    const ims = lb.job.images || []; const im = ims[lb.i]; if (!im) return;
+    $("lbImg").src = blobUrl(im.thumb || im.full); $("lbImg").alt = im.file || "";
+    $("lbName").textContent = (im.file || "") + "  ·  " + (lb.i + 1) + " / " + ims.length + (im.bytes ? "  ·  " + mb(im.bytes) : "");
+    $("lbSave").hidden = !im.full;
+    $("lbSave").disabled = !downloads;
+    $("lbLink").hidden = !!im.full || !lb.job.delivery;
+    if (lb.job.delivery) $("lbLink").href = lb.job.delivery;
+  }
+  $("lbClose").onclick = () => { $("lightbox").hidden = true; $("lbImg").src = ""; };
+  $("lbPrev").onclick = () => { const n = (lb.job.images || []).length; lb.i = (lb.i - 1 + n) % n; showLb(); };
+  $("lbNext").onclick = () => { const n = (lb.job.images || []).length; lb.i = (lb.i + 1) % n; showLb(); };
+  $("lbSave").onclick = async () => {
+    const im = lb.job.images[lb.i];
+    try {
+      const r = await fetch(blobUrl(im.full)); const b = await r.blob();
+      await downloads.save({ filename: im.file || "image.jpg", data: b });
+    } catch (err) { if (!(err && err.code === "declined")) toast("Download failed. Try again."); }
+  };
+  document.addEventListener("keydown", (e) => {
+    if ($("lightbox").hidden) return;
+    if (e.key === "Escape") $("lbClose").click();
+    if (e.key === "ArrowLeft") $("lbPrev").click();
+    if (e.key === "ArrowRight") $("lbNext").click();
+  });
+
+  // ---------- board
+  document.querySelectorAll("#filters .stagechip").forEach((b) => b.onclick = () => {
+    state.filter = b.dataset.f;
+    document.querySelectorAll("#filters .stagechip").forEach((x) => x.setAttribute("aria-pressed", x === b));
+    try { localStorage.setItem("kf-filter", state.filter); } catch {}
+    render();
+  });
+  try { const f = localStorage.getItem("kf-filter"); if (f) { const b = document.querySelector('#filters [data-f="' + f + '"]'); if (b) b.click(); } } catch {}
+  $("search").addEventListener("input", (e) => { state.q = e.target.value.trim().toLowerCase(); render(); });
+
+  function counts() {
+    const live = state.jobs.filter((j) => !j.archived);
+    $("cActive").textContent = live.length;
+    $("cUploaded").textContent = live.filter((j) => j.status === "uploaded" || j.status === "failed").length;
+    $("cEditing").textContent = live.filter((j) => j.status === "editing").length;
+    $("cComplete").textContent = live.filter((j) => j.status === "complete").length;
+    $("cArchived").textContent = state.jobs.filter((j) => j.archived).length;
+  }
+
+  function visible() {
+    return state.jobs.filter((j) => {
+      if (state.q && !String(j.property || "").toLowerCase().includes(state.q)) return false;
+      if (state.filter === "archived") return !!j.archived;
+      if (j.archived) return false;
+      if (state.filter === "active") return true;
+      if (state.filter === "uploaded") return j.status === "uploaded" || j.status === "failed";
+      return j.status === state.filter;
+    });
+  }
+
+  function stepsHtml(j) {
+    const idx = j.status === "complete" ? 2 : j.status === "editing" ? 1 : 0;
+    const p = j.progress || {};
+    const pct = j.status === "complete" ? 100 : j.status === "editing" && p.total ? Math.round(100 * p.done / p.total) : 0;
+    const names = ["Uploaded", "Editing", "Edit complete"];
+    return '<div class="steps" aria-hidden="true">' + names.map((n, i) => {
+      const cls = i < idx ? "done" : i === idx ? "now" + (i === 2 ? " c" : "") : "";
+      const w = i === idx ? (i === 0 ? 100 : pct) : 0;
+      return '<div class="step ' + cls + '" style="--p:' + w + '%"><i></i>' + n + "</div>";
+    }).join("") + "</div>";
+  }
+
+  function jobHtml(j) {
+    const day = j.style === "day";
+    const skyTxt = (day ? SKY_DAY : SKY_DUSK)[j.sky] || "Original sky";
+    const st = j.status === "failed" ? "failed" : j.status;
+    const stLabel = { uploaded: "Uploaded", editing: "Editing", complete: "Edit complete", failed: "Needs attention" }[st] || st;
+    const ims = j.images || [];
+    const p = j.progress || {};
+    const busy = !!state.busy[j.id];
+    const z = state.zip[j.id];
+    let html = '<article class="panel job' + (j.archived ? " archived" : "") + '" data-id="' + esc(j.id) + '">';
+    html += '<div class="jtop"><div class="jtitle"><h3>' + esc(j.property) + "</h3>";
+    html += '<div class="meta"><span class="tag ' + (day ? "day" : "dusk") + '">' + (day ? "Daytime" : "Twilight") + "</span>";
+    html += '<span class="tag plain">' + esc(skyTxt) + "</span>";
+    if (!day) html += '<span class="tag plain">' + (j.look === "purple" ? "Purple dusk" : "Natural dusk") + (j.lights ? " · lights enhanced" : "") + "</span>";
+    html += "<span>Added " + esc(fmtDate(j.createdAt)) + "</span></div></div>";
+    html += '<span class="status st-' + st + '">' + esc(stLabel) + "</span></div>";
+    html += stepsHtml(j);
+
+    // progress line
+    let line = "";
+    if (j.status === "editing") {
+      line = '<span class="stage">' + esc(j.stage || "Editing") + "</span>";
+      if (p.total) line += '<span class="num">' + (p.done || 0) + " of " + p.total + " images</span>";
+      if (j.startedAt) line += '<span class="sub">started ' + esc(fmtTime(j.startedAt)) + "</span>";
+      if (j.eta) line += '<span class="sub">about ' + esc(j.eta) + " left</span>";
+      if (j.heartbeat) line += '<span class="sub">updated ' + esc(ago(j.heartbeat)) + "</span>";
+    } else if (j.status === "complete") {
+      const total = ims.reduce((a, b) => a + (b.bytes || 0), 0);
+      line = '<span class="stage">' + ims.length + " images ready</span>";
+      if (j.delivery) line += '<span class="sub">Download all opens the delivery page, which saves them as one folder</span>';
+      if (total) line += '<span class="sub num">' + gb(total) + " total, max " + mb(Math.max(...ims.map((x) => x.bytes || 0))) + " each</span>";
+      if (j.finishedAt) line += '<span class="sub">finished ' + esc(fmtDate(j.finishedAt)) + " " + esc(fmtTime(j.finishedAt)) + "</span>";
+      if (j.filesDeleted) line = '<span class="sub">Files deleted to free up storage.</span>';
+    } else {
+      line = '<span class="stage">' + esc(j.stage || "Waiting for an editor") + "</span>";
+      if (j.lastStart && j.lastStart.ok && j.status === "uploaded") line += '<span class="sub">editor requested ' + esc(ago(j.lastStart.at)) + "</span>";
+    }
+    html += '<div class="progress">' + line + "</div>";
+    if (j.status === "failed" && j.error) html += '<div class="err">' + esc(j.error) + "</div>";
+    if (stalled(j)) html += '<div class="notice">No update from the editor for over ' + STALL_MIN + " minutes. Restart editing to pick up where it stopped.</div>";
+    if (j.report) html += '<div class="notice">' + esc(j.report) + "</div>";
+
+    // thumbnails
+    if (ims.length) {
+      const open = !!state.expanded[j.id];
+      const show = open ? ims : ims.slice(0, 11);
+      html += '<div class="thumbs">' + show.map((im, i) => im.thumb
+        ? '<button data-act="view" data-i="' + i + '" aria-label="View ' + esc(im.file || "image " + (i + 1)) + '"><img loading="lazy" src="' + blobUrl(im.thumb) + '" alt=""></button>'
+        : "").join("");
+      if (!open && ims.length > show.length) html += '<button class="more" data-act="expand">+' + (ims.length - show.length) + "</button>";
+      html += "</div>";
+    }
+
+    // actions
+    html += '<div class="actions">';
+    const c = state.confirm[j.id];
+    if (c === "delete") {
+      html += '<div class="confirm"><span>Delete this shoot and its ' + ims.length + ' images from the studio? Your Dropbox RAWs are not touched.</span>'
+        + '<button class="btn danger" data-act="delete-yes"' + (busy ? " disabled" : "") + '>Delete</button><button class="btn" data-act="cancel-confirm">Keep</button></div>';
+    } else if (c === "stop") {
+      html += '<div class="confirm"><span>Stop editing this shoot? Finished images are kept.</span>'
+        + '<button class="btn danger" data-act="stop-yes">Stop editing</button><button class="btn" data-act="cancel-confirm">Keep going</button></div>';
+    } else {
+      if (j.status === "complete" && j.delivery) {
+        html += '<a class="btn main" href="' + esc(j.delivery) + '" target="_blank" rel="noopener">Download all (' + ims.length + ")</a>";
+      } else if (j.status === "complete" && ims.some((x) => x.full) && !j.filesDeleted) {
+        html += '<button class="btn main" data-act="zip"' + (z || !downloads ? " disabled" : "") + ">"
+          + (z ? (z.packing ? "Packing zip…" : "Preparing " + z.done + " / " + z.total) : "Download all (" + ims.length + ")") + "</button>";
+      }
+      if (j.status === "uploaded" || j.status === "failed" || stalled(j)) {
+        html += '<button class="btn' + (j.status === "complete" ? "" : " main") + '" data-act="start"' + (busy ? " disabled" : "") + ">"
+          + (busy ? "Starting…" : j.status === "uploaded" && !(j.lastStart && j.lastStart.ok) ? "Start editing" : "Restart editing") + "</button>";
+      }
+      if (j.status === "editing" && !stalled(j)) html += '<button class="btn" data-act="stop"' + (j.cancel ? " disabled" : "") + ">" + (j.cancel ? "Stopping…" : "Stop") + "</button>";
+      if (j.status === "complete") html += '<button class="btn" data-act="redo">Edit again</button>';
+      if (!j.archived && j.status !== "editing") html += '<button class="btn" data-act="archive">Archive</button>';
+      if (j.archived) html += '<button class="btn" data-act="unarchive">Restore</button><button class="btn danger" data-act="delete">Delete shoot and files</button>';
+    }
+    html += "</div>";
+    html += '<div class="linkish">RAWs: <a href="' + esc(j.dropbox) + '" target="_blank" rel="noopener">' + esc(String(j.dropbox).replace(/^https:\/\/(www\.)?/, "").slice(0, 60)) + "…</a>"
+      + (j.notes ? " · Notes: " + esc(j.notes) : "") + "</div>";
+    html += "</article>";
+    return html;
+  }
+
+  function render() {
+    counts();
+    const list = visible();
+    const root = $("jobs");
+    $("emptyState").hidden = state.jobs.length > 0;
+    root.querySelectorAll("article.job, .panel.nomatch").forEach((n) => n.remove());
+    if (state.jobs.length && !list.length) {
+      root.insertAdjacentHTML("beforeend", '<div class="panel empty nomatch"><p>No shoots here. ' +
+        (state.filter === "archived" ? "Archive a finished shoot to move it out of the way." : "Try another filter.") + "</p></div>");
+    }
+    root.insertAdjacentHTML("beforeend", list.map(jobHtml).join(""));
+  }
+
+  $("jobs").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-act]"); if (!b) return;
+    const art = b.closest("article.job"); if (!art) return;
+    const j = state.jobs.find((x) => x.id === art.dataset.id); if (!j) return;
+    const act = b.dataset.act;
+    if (act === "view") openLb(j, +b.dataset.i);
+    else if (act === "expand") { state.expanded[j.id] = true; render(); }
+    else if (act === "zip") downloadAll(j);
+    else if (act === "start") startEditing(j.id, false);
+    else if (act === "stop") { state.confirm[j.id] = "stop"; render(); }
+    else if (act === "stop-yes") { state.confirm[j.id] = null; patch(j.id, { cancel: true }, "Stopping the editor"); }
+    else if (act === "redo") patch(j.id, { status: "uploaded", stage: "Waiting for an editor", progress: { done: 0, total: 0 } }).then(() => startEditing(j.id, false));
+    else if (act === "archive") patch(j.id, { archived: true }, "Archived");
+    else if (act === "unarchive") patch(j.id, { archived: false }, "Restored");
+    else if (act === "delete") { state.confirm[j.id] = "delete"; render(); }
+    else if (act === "delete-yes") deleteShoot(j);
+    else if (act === "cancel-confirm") { state.confirm[j.id] = null; render(); }
+  });
+
+  async function refreshMeter() {
+    if (!assets) return;
+    try {
+      const { usage } = await assets.list();
+      if (!usage || !usage.maxBytes) return;
+      $("meter").hidden = false;
+      $("meterText").textContent = "Storage " + gb(usage.bytes) + " of " + gb(usage.maxBytes);
+      $("meterBar").style.width = Math.min(100, 100 * usage.bytes / usage.maxBytes) + "%";
+    } catch {}
+  }
+
+  // ---------- boot
+  (async () => {
+    try { db = await claude.use("db"); } catch { db = null; }
+    if (!db) { $("offline").hidden = false; return; }
+    try { const user = await claude.use("user"); state.uid = user ? await user.id() : null; } catch {}
+    db.doc("config/worker").onSnapshot((s) => { state.triggerId = s.exists ? (s.data() || {}).trigger_id || null : null; }, () => {});
+    db.collection("jobs").orderBy("createdAt", "desc").limit(300).onSnapshot((snap) => {
+      state.jobs = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
+      render();
+    }, (err) => { $("offline").hidden = false; $("offline").textContent = "Couldn't load shoots (" + (err && err.code) + "). Reload the page."; });
+    claude.use("mcp").then((m) => { mcp = m; }).catch(() => {});
+    claude.use("downloads").then((d) => { downloads = d; render(); }).catch(() => {});
+    claude.use("assets").then((a) => { assets = a; refreshMeter(); }).catch(() => {});
+  })();
+  setInterval(() => { if (state.jobs.some((j) => j.status === "editing")) render(); }, 60000);
+})();
+</script>

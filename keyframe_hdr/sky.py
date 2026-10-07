@@ -61,6 +61,11 @@ def sky_probability(hdr: np.ndarray, windows: bool = True, size: int = 512) -> n
     img = _preview(hdr, size)
     probs = _segment(img)
     prob = probs[SKY_CLASS].copy()
+    # The window pass is for interiors (sky seen through glass). On exteriors the
+    # "windows" it finds are balustrades and facade glass, where it would mistake
+    # the distant view (hazy hills, snow) for sky.
+    if windows and float((prob > 0.5).mean()) > 0.05:
+        windows = False
     if windows:
         win = sum(probs[c] for c in WINDOW_CLASSES) > 0.5
         n, lab, stats, _ = cv2.connectedComponentsWithStats(win.astype(np.uint8), 8)
@@ -145,16 +150,30 @@ def refine_mask(prob_small: np.ndarray, hdr: np.ndarray, colour: bool = True) ->
     band = ((prob >= 0.1) & (prob <= 0.9)).astype(np.uint8)
     rb = max(3, int(0.006 * max(H, W)))
     band = cv2.dilate(band, np.ones((rb, rb), np.uint8)).astype(bool)
-    # local sky / foreground log-luminance by normalised convolution
-    sig = 0.02 * max(H, W)
+    # local sky / foreground log-luminance by normalised convolution. These are
+    # smooth (sigma = 2% of the frame), so they are computed on a ~1000 px grid and
+    # scaled up: same result, minutes faster and far less memory at 45 MP.
+    f = min(1.0, 1000.0 / max(H, W))
+    hs, wsz = max(1, int(round(H * f))), max(1, int(round(W * f)))
+    sig = 0.02 * max(hs, wsz)
     def ncov(x, w):
-        a = cv2.GaussianBlur(x * w, (0, 0), sig)
-        b = cv2.GaussianBlur(w, (0, 0), sig)
-        return a / np.maximum(b, 1e-4), b
+        xs = cv2.resize(x * w, (wsz, hs), interpolation=cv2.INTER_AREA)
+        wsm = cv2.resize(w, (wsz, hs), interpolation=cv2.INTER_AREA)
+        a = cv2.GaussianBlur(xs, (0, 0), sig)
+        b = cv2.GaussianBlur(wsm, (0, 0), sig)
+        up = lambda z: cv2.resize(z, (W, H), interpolation=cv2.INTER_LINEAR)
+        return up(a / np.maximum(b, 1e-4)), up(b)
     Ls, ws = ncov(L, core_sky)
     Lf, wf = ncov(L, core_fg)
     gap = Ls - Lf
-    alpha_key = np.clip((L - Lf) / np.maximum(gap, 1e-3), 0, 1)
+    # sky only where a pixel is about as bright as the sky around it: a sunlit post
+    # top or a pale wall a stop or more darker stays solid; anti-aliased edges and
+    # thin branches land on the ramp and mix
+    t = np.clip((L - (Ls - 1.6)) / 1.0, 0, 1)
+    alpha_key = t * t * (3 - 2 * t)
+    # ...and only where the model leans sky at all: bright snow or a white wall on
+    # the foreground side of the boundary is as bright as the sky but isn't sky
+    alpha_key *= np.clip((prob - 0.05) / 0.25, 0, 1)
     usable = (gap > 1.0) & (ws > 0.02) & (wf > 0.02)  # sky clearly brighter than what's in front
     alpha = np.where(prob > 0.5, 1.0, 0.0).astype(np.float32)
     alpha = np.where(band & usable, alpha_key, alpha)

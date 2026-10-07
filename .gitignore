@@ -12,3 +12,4 @@ __pycache__/
 *.tiff
 output/
 .work/
+kf_jobs/

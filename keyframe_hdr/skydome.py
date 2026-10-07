@@ -77,33 +77,42 @@ def fetch(name: str, res: str = RES) -> str:
 
 def load(name: str, res: str = RES) -> tuple[np.ndarray, dict]:
     """The dome's upper band (elevation 90 .. -10 deg) as float16 linear Rec.2020,
-    memory-mapped from a cache file, plus its sun position."""
+    memory-mapped from a cache file, plus its sun position. Safe to call from
+    several processes at once: the first one builds the cache, the others wait."""
+    import fcntl
+    os.makedirs(CACHE, exist_ok=True)
     npy = os.path.join(CACHE, f"{name}_{res}_band.npy")
     meta_p = npy[:-4] + ".json"
-    if not (os.path.exists(npy) and os.path.exists(meta_p)):
-        img = cv2.imread(fetch(name, res), cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
-        if img is None:
-            raise RuntimeError(f"could not read sky dome {name}")
-        Hd, Wd = img.shape[:2]
-        v1 = int(round((90.0 - BAND_BOTTOM) / 180.0 * Hd))
-        band = np.empty((v1, Wd, 3), np.float16)
-        for r0 in range(0, v1, 512):
-            blk = img[r0:min(v1, r0 + 512), :, ::-1].astype(np.float32)
-            band[r0:r0 + blk.shape[0]] = np.clip(blk @ _709_TO_2020.T, 0, 60000)  # float16 range
-        del img
-        # sun: brightest spot of a blurred low-res copy
-        small = cv2.resize(band.astype(np.float32), (1024, int(1024 * v1 / Wd)), interpolation=cv2.INTER_AREA)
-        Ys = cv2.GaussianBlur(small @ np.array([0.2627, 0.678, 0.0593], np.float32), (0, 0), 3)
-        sy, sx = np.unravel_index(int(np.argmax(Ys)), Ys.shape)
-        meta = {"name": name, "res": res, "width": Wd, "height": Hd, "rows": v1,
-                "sun_az": (sx + 0.5) / small.shape[1] * 360.0 - 180.0,
-                "sun_el": 90.0 - (sy + 0.5) / small.shape[0] * (90.0 - BAND_BOTTOM)}
-        tmp = npy + ".part.npy"
-        np.save(tmp, band)
-        os.replace(tmp, npy)
-        json.dump(meta, open(meta_p, "w"))
-        del band
+    with open(os.path.join(CACHE, f"{name}_{res}.lock"), "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        if not (os.path.exists(npy) and os.path.exists(meta_p)):
+            _build_band(name, res, npy, meta_p)
     return np.load(npy, mmap_mode="r"), json.load(open(meta_p))
+
+
+def _build_band(name: str, res: str, npy: str, meta_p: str) -> None:
+    img = cv2.imread(fetch(name, res), cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
+    if img is None:
+        raise RuntimeError(f"could not read sky dome {name}")
+    Hd, Wd = img.shape[:2]
+    v1 = int(round((90.0 - BAND_BOTTOM) / 180.0 * Hd))
+    band = np.empty((v1, Wd, 3), np.float16)
+    for r0 in range(0, v1, 512):
+        blk = img[r0:min(v1, r0 + 512), :, ::-1].astype(np.float32)
+        band[r0:r0 + blk.shape[0]] = np.clip(blk @ _709_TO_2020.T, 0, 60000)  # float16 range
+    del img
+    # sun: brightest spot of a blurred low-res copy
+    small = cv2.resize(band[::4, ::4].astype(np.float32), (1024, int(1024 * v1 / Wd)), interpolation=cv2.INTER_AREA)
+    Ys = cv2.GaussianBlur(small @ np.array([0.2627, 0.678, 0.0593], np.float32), (0, 0), 3)
+    sy, sx = np.unravel_index(int(np.argmax(Ys)), Ys.shape)
+    meta = {"name": name, "res": res, "width": Wd, "height": Hd, "rows": v1,
+            "sun_az": (sx + 0.5) / small.shape[1] * 360.0 - 180.0,
+            "sun_el": 90.0 - (sy + 0.5) / small.shape[0] * (90.0 - BAND_BOTTOM)}
+    tmp = npy + ".part.npy"
+    np.save(tmp, band)
+    os.replace(tmp, npy)
+    json.dump(meta, open(meta_p, "w"))
+    del band
 
 
 def view_yaw(option: str, meta: dict, shot_meta: dict, shot_index: int, seed: str | int,
@@ -230,10 +239,22 @@ def replace(hdr: np.ndarray, option: str, ref_meta: dict, ginfo: dict | None = N
     # Swap only the old sky's share for the new sky's (exact in linear light), so
     # no halo of the old sky's colour survives around roofs, trees and posts.
     old_sky = _local_sky(hdr[r0:r1], a)
-    a3 = a[..., None]
     blk = hdr[r0:r1]
-    blk += a3 * (new - old_sky)
-    np.maximum(blk, blk * 0 + (1 - a3) * 1e-6, out=blk)
+    for y0 in range(0, blk.shape[0], 512):
+        sl = slice(y0, y0 + 512)
+        I, B, N = blk[sl], old_sky[sl], new[sl]
+        a3 = a[sl][..., None]
+        # decontaminated: remove the old sky's share, add the new sky's
+        dec = I + a3 * (N - B)
+        # ...valid only where the pixel really holds that much old sky light; where
+        # the matte overestimates (flare, haze), fall back to a plain blend so dark
+        # edges are never pushed to black
+        Yi = I @ np.array([0.2627, 0.678, 0.0593], np.float32)
+        Yb = B @ np.array([0.2627, 0.678, 0.0593], np.float32)
+        c = np.clip(Yi / np.maximum(a3[..., 0] * Yb, 1e-9), 0, 1)[..., None]
+        c = c * c
+        plain = I * (1 - a3) + N * a3
+        blk[sl] = np.maximum(c * dec + (1 - c) * plain, 0)
     info["_alpha"] = alpha  # for the grade (twilight purple); not serialised
     info.update({"applied": True, "dome": name, "yaw": round(yaw, 1), "f_px": round(f_px, 1),
                  "pp": [round(pp[0], 1), round(pp[1], 1)], "exposure_match": round(k, 6)})

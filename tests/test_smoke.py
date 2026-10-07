@@ -64,3 +64,16 @@ def test_bracket_grouping():
 def test_upright_rotation_is_identity_for_vertical():
     R = geometry._rotation_to_y(np.array([0.0, 1.0, 0.0]))
     assert np.allclose(R, np.eye(3))
+
+
+def test_strip_cleaning_matches_whole_image():
+    from keyframe_hdr import denoise
+    rng = np.random.default_rng(1)
+    img = np.abs(rng.normal(0.2, 0.15, (2600, 400, 3))).astype(np.float32)
+    img[:, 200:203] = 3.0  # extreme-contrast edge
+    whole = denoise.defringe(denoise.luma_nr(denoise.chroma_nr(img.copy(), 1.0, r=4), 0.35, r=1), 1.0)
+    rc, rl = 4, 1
+    halo = 2 * rc + 2 * rl + 4
+    fn = lambda b: denoise.defringe(denoise.luma_nr(denoise.chroma_nr(b, 1.0, r=rc), 0.35, r=rl), 1.0)
+    strips = denoise.in_strips(fn, img.copy(), halo, rows=700)
+    assert np.abs(whole - strips).max() < 1e-4

@@ -91,14 +91,14 @@ def merge_bracket(group: list[dict], p: dict, half: bool = False) -> tuple[np.nd
         f = raw.decode(m["decode_path"], m, m.get("nef_meta"), half=half, wb=wb,
                        nikon_vignette_strength=p.get("nikon_vignette_strength", 0.75))
         f.rgb = f.rgb.astype(np.float16)  # half the memory; ample precision for merging
+        if frames:
+            f.hard = None  # only the darkest frame's raw clip map is needed by the merge
         frames.append(f)
     t1 = time.time()
     merge.align(frames, len(frames) // 2)
     hdr, minfo = merge.merge(frames, deghost=p.get("deghost", True))
     del frames
-    hdr = denoise.chroma_nr(hdr, p.get("chroma_nr", 1.0))
-    hdr = denoise.luma_nr(hdr, p.get("luma_nr", 0.35))
-    hdr = denoise.defringe(hdr, p.get("defringe", 1.0))
+    hdr = denoise.clean(hdr, p.get("chroma_nr", 1.0), p.get("luma_nr", 0.35), p.get("defringe", 1.0))
     info = {"files": [m["FileName"] for m in ordered], "merge": minfo,
             "timing": {"decode": round(t1 - t0, 1), "merge": round(time.time() - t1, 1)}}
     return hdr, ref_meta, info

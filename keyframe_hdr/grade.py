@@ -292,3 +292,57 @@ def sharpen(v: np.ndarray, radius: float, amount: float, threshold: float = 0.01
     d = Y - blur
     m = np.clip((np.abs(d) - threshold) / threshold, 0, 1)
     return np.clip(v + (amount * d * m)[..., None], 0, 1)
+
+
+def suppress_specular_specks(v: np.ndarray) -> tuple[np.ndarray, int]:
+    """Optional (preset key `despeckle`, off by default): the merge already renders
+    pixels clipped in every frame as white, which is the reliable fix. This
+    colour-only heuristic can also catch sunlit wicker, foliage or bulb glow.
+
+    Neutralise tiny neon specks in near-white highlights (sun glints on roofs,
+    chrome, car glass). They come from highlights clipped differently per
+    channel and read as green/yellow/blue confetti at 100%.
+
+    A speck is (a) bright with a near-pure neon hue, (b) small, and (c) much more
+    colourful than what surrounds it. Real bright colour (sunlit cedar, a cream
+    wall, a yellow door) is less saturated and surrounded by more of the same, so
+    it is left exactly as it is. `v` is display sRGB in [0,1]."""
+    H, W = v.shape[:2]
+    mx, mn = v.max(axis=2), v.min(axis=2)
+    chroma = mx - mn
+    # candidates include darker saturated pixels so two-tone glints (yellow core,
+    # blue fringe) form one blob; each blob must still have a bright core
+    cand = ((mx > 0.55) & (chroma > 0.28)).astype(np.uint8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(cand, 8)
+    if n <= 1:
+        return v, 0
+    core = np.zeros(n, np.float32)
+    peak = np.zeros(n, np.float32)
+    ii = lab.ravel()
+    on = ii > 0
+    np.maximum.at(core, ii[on], mx.ravel()[on])
+    np.maximum.at(peak, ii[on], chroma.ravel()[on])
+    # mean chroma of the non-candidate neighbourhood of every pixel
+    k = max(7, int(0.0012 * max(H, W)) | 1)
+    outside = (1 - cand).astype(np.float32)
+    num = cv2.boxFilter(chroma * outside, -1, (k, k), normalize=False)
+    den = cv2.boxFilter(outside, -1, (k, k), normalize=False)
+    ring = num / np.maximum(den, 1e-3)
+    idx = lab.ravel()
+    sel = idx > 0
+    ring_mean = np.bincount(idx[sel], weights=ring.ravel()[sel], minlength=n) / np.maximum(
+        np.bincount(idx[sel], minlength=n), 1)
+    area = stats[:, cv2.CC_STAT_AREA]
+    # neon (near-pure hue) on a much less colourful surround; sunlit timber,
+    # cream walls and painted surfaces never reach this saturation
+    speck = ((area <= max(60, 2.5e-5 * H * W)) & (core > 0.85) & (peak > 0.62)
+             & (ring_mean < np.minimum(0.35, 0.55 * peak)))
+    speck[0] = False
+    count = int(speck.sum())
+    if count == 0:
+        return v, 0
+    m = cv2.dilate(speck[lab].astype(np.uint8), np.ones((3, 3), np.uint8)).astype(np.float32)
+    m = cv2.GaussianBlur(m, (0, 0), 0.8)[..., None]
+    Y = (v @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32))[..., None]
+    grey = np.maximum(Y, v.max(axis=2, keepdims=True) * 0.92)  # keep the glint bright
+    return np.clip(v * (1 - m) + grey * m, 0, 1).astype(np.float32), count

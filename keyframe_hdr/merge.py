@@ -111,6 +111,9 @@ def align(frames: list[Frame], ref_idx: int, motion: str = "auto", size: int = 2
                                     borderMode=cv2.BORDER_REFLECT).astype(dt)
         f.clip = cv2.warpPerspective(f.clip, Wf, (W, H), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
                                      borderMode=cv2.BORDER_REFLECT)
+        if f.hard is not None:
+            f.hard = cv2.warpPerspective(f.hard, Wf, (W, H), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+                                         borderMode=cv2.BORDER_REFLECT)
     return frames
 
 
@@ -198,6 +201,10 @@ def merge(frames: list[Frame], deghost: bool = True) -> tuple[np.ndarray, dict]:
     # surviving channel ratios are meaningless and turn magenta after white
     # balance. Render them as neutral white at the brightest channel's level.
     c = frames[0].clip
+    if frames[0].hard is not None:
+        # every pixel that clipped even in the darkest frame goes fully neutral
+        hard = cv2.GaussianBlur(np.clip(frames[0].hard * 1.5, 0, 1), (0, 0), 1.0)
+        c = np.maximum(c, hard)
     if c.max() > 0:
         mx = hdr.max(axis=2, keepdims=True)
         cc = c[:, :, None]

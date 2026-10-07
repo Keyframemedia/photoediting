@@ -32,6 +32,7 @@ class Frame:
     clip: np.ndarray       # HxW float32, 1 where any channel was near sensor clip
     exposure: float        # relative exposure (shutter * ISO / N^2)
     meta: dict
+    hard: np.ndarray | None = None  # HxW float32, 1 where a channel actually hit clip (unblurred)
 
 
 def exif(paths: list[str]) -> list[dict]:
@@ -78,6 +79,10 @@ def decode(path: str, meta: dict, nef_meta: dict | None = None, half: bool = Fal
     # (dilate + blur) so merge weights never flip pixel-to-pixel on noise, and
     # conservative around clipped areas where demosaicing has mixed in bad values.
     sat = np.max(rgb / clip_lvl[None, None, :], axis=2).astype(np.float32)
+    # Pixels where a channel truly hit the sensor's clip point: their colour is
+    # unrecoverable (glints, LEDs, the sun). Kept sharp so the merge can render
+    # them white when even the darkest frame clipped, without touching real colour.
+    hard = cv2.dilate((sat >= 0.97).astype(np.uint8), np.ones((3, 3), np.uint8)).astype(np.float32)
     sat = cv2.dilate(sat, np.ones((5, 5), np.uint8))
     sat = cv2.GaussianBlur(sat, (0, 0), 2.0 if not half else 1.0)
     t = np.clip((sat - 0.80) / 0.16, 0, 1)
@@ -108,7 +113,8 @@ def decode(path: str, meta: dict, nef_meta: dict | None = None, half: bool = Fal
         if g is not None:
             rgb *= g[:, :, None]
     if ops.warp is not None:
-        rgb, clip = lens.apply_warp(rgb, ops.warp, clip)
+        rgb, masks = lens.apply_warp(rgb, ops.warp, np.dstack([clip, hard]))
+        clip, hard = np.ascontiguousarray(masks[..., 0]), np.ascontiguousarray(masks[..., 1])
 
     # default crop (LibRaw leaves the DNG DefaultCrop margins in place)
     cl, ct = sizes.crop_left_margin, sizes.crop_top_margin
@@ -118,6 +124,7 @@ def decode(path: str, meta: dict, nef_meta: dict | None = None, half: bool = Fal
             cl, ct, cw, ch = cl // 2, ct // 2, cw // 2, ch // 2
         rgb = rgb[ct:ct + ch, cl:cl + cw]
         clip = clip[ct:ct + ch, cl:cl + cw]
+        hard = hard[ct:ct + ch, cl:cl + cw]
 
     # camera RGB -> linear sRGB -> linear Rec.2020
     M = SRGB_TO_REC2020 @ cm
@@ -125,11 +132,8 @@ def decode(path: str, meta: dict, nef_meta: dict | None = None, half: bool = Fal
     np.maximum(rgb, 0, out=rgb)
 
     orient = int(meta.get("Orientation") or 1)
-    if orient == 6:
-        rgb, clip = np.ascontiguousarray(np.rot90(rgb, -1)), np.ascontiguousarray(np.rot90(clip, -1))
-    elif orient == 8:
-        rgb, clip = np.ascontiguousarray(np.rot90(rgb, 1)), np.ascontiguousarray(np.rot90(clip, 1))
-    elif orient == 3:
-        rgb, clip = np.ascontiguousarray(rgb[::-1, ::-1]), np.ascontiguousarray(clip[::-1, ::-1])
+    turn = {6: lambda a: np.rot90(a, -1), 8: lambda a: np.rot90(a, 1), 3: lambda a: a[::-1, ::-1]}.get(orient)
+    if turn:
+        rgb, clip, hard = (np.ascontiguousarray(turn(a)) for a in (rgb, clip, hard))
 
-    return Frame(path, rgb, clip, relative_exposure(meta), dict(meta, wb=cam_wb))
+    return Frame(path, rgb, clip, relative_exposure(meta), dict(meta, wb=cam_wb), hard)

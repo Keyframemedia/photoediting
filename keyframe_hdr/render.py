@@ -110,6 +110,8 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = 
         c = grade.gamut_map_srgb(grade.oklab_to_rec2020(lab).astype(np.float32))
         rgb[sl] = tonemap.srgb_encode(np.clip(c, 0, 1))
     v = rgb
+    if p.get("despeckle", False):
+        v, info["specks"] = grade.suppress_specular_specks(v)
     if return_info:
         return v, info
     return v

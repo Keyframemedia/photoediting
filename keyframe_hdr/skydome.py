@@ -346,10 +346,13 @@ def paint_gradient(v: np.ndarray, alpha: np.ndarray, f_px: float, pp: tuple[floa
     """Draw the sky of a finished sRGB image (in place) to a house gradient.
 
     Each sky pixel moves by the difference between the gradient at its elevation
-    and the local mean of the sky as rendered, scaled by the matte, so cloud
-    detail is kept (`texture` scales it) and edge pixels move only by their sky
-    share. `wisps` adds thin high streaks lit like the sky ~12 degrees lower (pinker
-    overhead, peachier low down), placed by azimuth and elevation."""
+    and the local mean of the sky as rendered, scaled by the matte, so edge pixels
+    move only by their sky share. In clear sky the dome's structure is kept only
+    as seen at quarter size (`texture` scales it): at full size an upsampled dome
+    shows its own grain. A dither well under one code value keeps the clean
+    gradient from banding. `wisps` adds thin high streaks lit like the sky ~12
+    degrees lower (pinker overhead, peachier low down), placed by azimuth and
+    elevation."""
     from .grade import gamut_map_srgb, oklab_to_rec2020, rec2020_to_oklab
     from .tonemap import srgb_decode, srgb_encode
     stops = np.array(GRADIENTS[gradient], np.float32)
@@ -367,6 +370,17 @@ def paint_gradient(v: np.ndarray, alpha: np.ndarray, f_px: float, pp: tuple[floa
     den = cv2.GaussianBlur(wt, (0, 0), sig)[..., None]
     mean_s = np.where(den > 1e-3, num / np.maximum(den, 1e-4), lab_s).astype(np.float32)
     gx = ((np.arange(W, dtype=np.float32) + 0.5) / sc - 0.5)[None, :]
+    # the sky's structure at quarter size (grain-free), as a deviation from its mean
+    sq = max(1, min(4, sc))
+    hq, wq = max(1, H // sq), max(1, W // sq)
+    lab_q = rec2020_to_oklab(srgb_decode(cv2.resize(v, (wq, hq), interpolation=cv2.INTER_AREA)) @ to2020)
+    qx = ((np.arange(W, dtype=np.float32) + 0.5) / sq - 0.5)[None, :]
+    mx = ((np.arange(wq, dtype=np.float32) + 0.5) * sq / sc - 0.5)[None, :]
+    my = ((np.arange(hq, dtype=np.float32) + 0.5) * sq / sc - 0.5)[:, None]
+    dev_q = lab_q - cv2.remap(mean_s, np.broadcast_to(mx, (hq, wq)).astype(np.float32),
+                              np.broadcast_to(my, (hq, wq)).astype(np.float32), cv2.INTER_LINEAR,
+                              borderMode=cv2.BORDER_REPLICATE)
+    rng = np.random.default_rng(12345)
     field = _wisp_field(seed) if wisps > 0 else None
     res = 0.25
     for y0 in range(0, H, strip):
@@ -391,9 +405,15 @@ def paint_gradient(v: np.ndarray, alpha: np.ndarray, f_px: float, pp: tuple[floa
         mean = cv2.remap(mean_s, np.broadcast_to(gx, el.shape).astype(np.float32),
                          np.broadcast_to(gy, el.shape).astype(np.float32), cv2.INTER_LINEAR,
                          borderMode=cv2.BORDER_REPLICATE)
+        qy = ((np.arange(y0, y1, dtype=np.float32) + 0.5) / sq - 0.5)[:, None]
+        dev_s = cv2.remap(dev_q, np.broadcast_to(qx, el.shape).astype(np.float32),
+                          np.broadcast_to(qy, el.shape).astype(np.float32), cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_REPLICATE)
         lab = rec2020_to_oklab(srgb_decode(v[y0:y1]) @ to2020)
         dev = lab - mean
         a3 = (a * np.float32(strength))[..., None]
-        lab = lab + a3 * ((tgt - mean) + np.float32(texture - 1.0) * dev)
+        pure = (np.clip((a - 0.9) / 0.1, 0, 1) * np.float32(strength))[..., None]
+        lab = lab + a3 * (tgt - mean) + pure * (np.float32(texture) * dev_s - dev)
+        lab[..., 0] += pure[..., 0] * rng.normal(0, 0.0015, el.shape).astype(np.float32)
         v[y0:y1] = srgb_encode(np.clip(gamut_map_srgb(oklab_to_rec2020(lab).astype(np.float32)), 0, 1))
     return v, {"gradient": gradient, "applied": True, "texture": texture, "wisps": wisps}

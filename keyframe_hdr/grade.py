@@ -228,6 +228,14 @@ def clarity(Yd: np.ndarray, amount: float, sigma: float) -> np.ndarray:
     return np.clip(Yd + amount * detail * (0.15 + 0.85 * mid) * hi_fade, 0, 1)
 
 
+def view_clarity(Yd: np.ndarray, weight: np.ndarray, amount: float, sigma: float) -> np.ndarray:
+    """Local contrast for skies and views only (`weight` from the global-exposure
+    blend), faded toward pure white so cloud tops stay soft."""
+    detail = Yd - fast_blur(Yd, sigma)
+    top = 1 - np.clip((Yd - 0.88) / 0.1, 0, 1)
+    return np.clip(Yd + amount * detail * weight * top, 0, 1)
+
+
 # ---------------------------------------------------------------------------
 # Colour
 # ---------------------------------------------------------------------------

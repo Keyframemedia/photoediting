@@ -61,6 +61,7 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = 
     # locally adapted fusion: keeps natural cloud-to-blue contrast (no grey,
     # crunchy "HDR skies") while rooms keep the local balancing. Weighting is a
     # per-pixel function of luminance only, so it cannot create halos.
+    w_view = None
     if p.get("sky_global", 0) > 0:
         lY = np.log2(np.maximum(Y, 1e-7))
         lk = np.log2(tonemap_key(Y, p))
@@ -77,6 +78,7 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = 
             w = bright * p["sky_global"]
             Yd = Yd * (1 - w) + Yg * w
             info["sky_global_ref"] = round(ref, 4)
+            w_view = w
 
     # 4. levels: black point from the image (Blacks slider to the clipping point);
     #    whites only nudged up if the brightest areas fall short, never squashed.
@@ -95,6 +97,11 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = 
     Yd = grade.clarity(Yd, p.get("clarity", 0.0), sig)
     if p.get("micro_contrast", 0) > 0:
         Yd = grade.clarity(Yd, p["micro_contrast"], p.get("micro_sigma_frac", 0.0025) * max(Yd.shape))
+    if p.get("view_clarity", 0) > 0 and w_view is not None:
+        # skies and window views get their own, finer local contrast (the midtone
+        # clarity above fades out there): crisp distant hills and cloud edges
+        Yd = grade.view_clarity(Yd, w_view, p["view_clarity"], p.get("view_sigma_frac", 0.004) * max(Yd.shape))
+    del w_view
 
     Yd_lin = tonemap.srgb_decode(Yd).astype(np.float32)
     del Yd

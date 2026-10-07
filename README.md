@@ -78,7 +78,7 @@ Portal side (repo `Keyframemedia/NEW-keyframe-portal`):
 | Merge | Aligns frames (ECC, sub-pixel; homography for drone), refines exposure ratios from the data, merges in linear light with smooth, noise-optimal weights, suppresses ghosts (moving trees, clouds, people), renders highlights clipped in every frame (sun, glare on water) as clean white. |
 | Clean | Edge-aware chroma and luminance noise reduction, purple-fringe suppression. |
 | Upright | Detects vertical lines, estimates camera pitch/roll with the real focal length and re-projects to a level camera (two-point perspective), then crops to the largest clean 3:2 frame. No upsampling. Skipped for drone shots. |
-| Tone | Hat-weighted exposure fusion of virtual exposures (each area gets the brightest rendering that is not clipped), so rooms are bright and walls clean, not the grey "HDR look". Skies and views blend toward one global exposure, so clouds stay white and natural instead of crunchy. Auto black point, gentle white stretch, S-curve. |
+| Tone | Hat-weighted exposure fusion of virtual exposures (each area gets the brightest rendering that is not clipped), so rooms are bright and walls clean, not the grey "HDR look". Skies and views blend toward one global exposure, so clouds stay white and natural instead of crunchy, then get their own fine local contrast (crisp hills and cloud edges). Auto black point, gentle white stretch, S-curve. |
 | Grade | White balance measured off the room's own neutral surfaces and set to a warm-clean white (Planckian 5600 K). Sky-lit exteriors are only warmed a little, so blue skies stay blue. Clarity is weighted to midtones and switched off in skies. Oklab vibrance, foliage pulled warm, timber protected from oversaturation. Last, the house LUT (learned from Keyframe's delivered edits) sets the final colour rendering. |
 | Output | Gamut-mapped to sRGB (soft, no clipped colours), output-sharpened per size, sRGB ICC + camera EXIF embedded. |
 
@@ -115,7 +115,9 @@ and a homography) to Keyframe's delivered JPEG of the same frame.
 2. For day, a 3D LUT (`keyframe_hdr/luts/day.npy`) carries the remaining colour rendering:
    creamy whites, timber, greens and sky blue. It is fitted on a coarse 13^3 lattice with a
    smoothness prior, then baked through a cubic spline into a 65^3 table, so smooth ceilings
-   and skies never band.
+   and skies never band. A least-squares fit on misaligned pairs also flattens tone, so the
+   LUT's lightness is then matched to the delivered images' brightness distribution
+   (histogram matching, which needs no alignment), and pure white is pinned to white.
 3. For twilight the sky was masked out of the comparison, because the delivered skies are
    replaced. A LUT didn't generalise on the four pairs available, so twilight uses fitted
    parameters only.

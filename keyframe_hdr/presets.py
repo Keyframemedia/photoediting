@@ -6,7 +6,7 @@ DAY = {
     # rendered and aligned to the delivered JPEG, parameters searched to minimise the
     # Oklab difference, then the house LUT fitted on the remainder (luts/day.npy).
     # exposure: scene median (windows/sky excluded) to `key`, plus bias
-    "exposure_mode": "median", "key": 0.33, "key_pct": 50, "key_exclude_top": 0.10,
+    "exposure_mode": "median", "key": 0.27, "key_pct": 50, "key_exclude_top": 0.10,
     "exposure_bias": 0.0,
     # white balance: neutral surfaces land on a warm-clean white (Planckian target)
     "wb_target_cct": 5600, "wb_strength": 0.75, "wb_tint": 0.0, "wb_max_mired": 45,
@@ -24,11 +24,13 @@ DAY = {
     # levels + tone: bright and open, gentle contrast
     "levels": True, "black_pct": 0.05, "white_pct": 99.5, "white_target": 0.99,
     "max_white_stretch": 1.3,
-    "black": 0.0, "white": 1.0, "contrast": 0.15, "pivot": 0.25, "toe": 0.04, "shoulder": 0.06,
+    "black": 0.0, "white": 1.0, "contrast": 0.15, "pivot": 0.42, "toe": 0.04, "shoulder": 0.06,
     "clarity": 0.10, "clarity_sigma_frac": 0.012, "micro_contrast": 0.20, "micro_sigma_frac": 0.002,
     "desat_highlights": 0.7,
+    # skies and window views: their own finer local contrast (crisp hills, cloud edges)
+    "view_clarity": 0.4, "view_sigma_frac": 0.006,
     # colour (Oklab units); most of the house colour is in the LUT
-    "vibrance": 0.10, "saturation": 0.0, "warmth_b": 0.006, "tint_a": 0.0,
+    "vibrance": 0.30, "saturation": 0.0, "warmth_b": 0.006, "tint_a": 0.0,
     "sky_sat": 0.0, "sky_deepen": 0.015, "green_warm_deg": -6.0, "green_sat": 0.05,
     "orange_protect": 0.5,
     "lut": "day", "lut_strength": 1.0,
@@ -56,7 +58,7 @@ NIGHT.update({
     "lights": True, "lights_glow": 0.35, "lights_pool": 0.18, "lights_warmth": 0.04,
     # held from the earlier day look this was built on
     "sky_global": 0.9, "sky_global_hi": 2.4, "sky_global_white": 0.6, "white_target": 0.96,
-    "max_white_stretch": 1.12, "pivot": 0.42, "shoulder": 0.06, "lut": None,
+    "max_white_stretch": 1.12, "pivot": 0.42, "shoulder": 0.06, "lut": None, "view_clarity": 0.0,
 })
 
 # Twilight: Keyframe's delivered dusk look, fitted on Water Lily (dusk) the same way
@@ -101,6 +103,7 @@ def job_overrides(style: str, sky: str = "original", look: str = "natural", ligh
             # the dome gives the sky its shape; the house twilight colour is painted
             # over it after the grade (skydome.GRADIENTS)
             ov["sky_gradient"] = "purple" if look == "purple" else "natural"
+            ov["sky_texture"] = 1.0 if sky == "clouds" else 0.5  # clear: wisps, little else
         elif look == "purple":
             ov["sky_purple_deg"] = 18.0
             ov["sky_purple_sat"] = 0.08

@@ -106,6 +106,19 @@ def bake(lut: np.ndarray, m: int = 65) -> np.ndarray:
     return np.clip(out, 0, 1).astype(np.float32)
 
 
+def pin_white(lut: np.ndarray, start: float = 0.85) -> np.ndarray:
+    """Make pure white map to pure white. A fit on blurred, imperfectly aligned
+    pairs dulls the very top (white lands near 0.95); the correction fades in
+    smoothly over colours whose every channel is above `start`, so nothing below
+    the near-white corner moves."""
+    n = lut.shape[0]
+    g = np.linspace(0, 1, n, dtype=np.float32)
+    c = np.stack(np.meshgrid(g, g, g, indexing="ij"), -1)
+    t = np.clip((c.min(-1) - start) / (1 - start), 0, 1)
+    phi = (t * t * (3 - 2 * t))[..., None]
+    return np.clip(lut + (1.0 - lut[-1, -1, -1]) * phi, 0, 1).astype(np.float32)
+
+
 def load(name: str) -> np.ndarray | None:
     p = os.path.join(LUT_DIR, name if name.endswith(".npy") else name + ".npy")
     return np.load(p).astype(np.float32) if os.path.exists(p) else None

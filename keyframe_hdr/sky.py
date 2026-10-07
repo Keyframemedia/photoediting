@@ -140,7 +140,8 @@ def procedural_sky(W: int, H: int, horizon: float, kind: str = "clear") -> np.nd
 
 
 def replace_sky(hdr: np.ndarray, sky: str | np.ndarray | None = None, strength: float = 1.0,
-                brightness: float = 1.0, prob: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
+                brightness: float = 1.0, prob: np.ndarray | None = None,
+                chroma: float = 0.5) -> tuple[np.ndarray, dict]:
     """Replace the sky in a linear HDR image. `sky` is a path to an image, an sRGB
     float array, or None / "clear" / "dusk" for a procedural sky."""
     H, W = hdr.shape[:2]
@@ -171,6 +172,15 @@ def replace_sky(hdr: np.ndarray, sky: str | np.ndarray | None = None, strength: 
         if crop.shape[0] < H:
             src[crop.shape[0]:] = crop[-1]
     lin = srgb_decode(src).astype(np.float32)
+    # Library skies are finished photos; the house grade (vibrance, sky saturation)
+    # runs again after compositing, so pull their chroma back first.
+    if chroma != 1.0 and not (sky is None or isinstance(sky, str) and sky in ("clear", "dusk")):
+        from .grade import oklab_to_rec2020, rec2020_to_oklab
+        lab = rec2020_to_oklab(lin)
+        # bright cloud tops (often clipped in the source JPEG) go neutral white
+        hi = np.clip((lab[..., 0:1] - 0.80) / 0.15, 0, 1)
+        lab[..., 1:] *= chroma * (1 - 0.85 * hi)
+        lin = np.maximum(oklab_to_rec2020(lab), 0).astype(np.float32)
     # light near the horizon is hazier: lift the bottom 12% of the sky slightly
     yy = np.linspace(0, 1, H, dtype=np.float32)[:, None] / max(horizon, 1e-3)
     haze = np.clip((yy - 0.88) / 0.12, 0, 1)[..., None]
@@ -180,7 +190,7 @@ def replace_sky(hdr: np.ndarray, sky: str | np.ndarray | None = None, strength: 
     old = luminance(hdr)[sel]
     new = luminance(lin)[sel]
     if old.size > 100:
-        k = np.percentile(old, 75) / max(np.percentile(new, 75), 1e-6)
+        k = np.percentile(old, 50) / max(np.percentile(new, 50), 1e-6)
     else:
         k = 1.0
     lin *= k * brightness

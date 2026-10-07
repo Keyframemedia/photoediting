@@ -6,12 +6,15 @@ DAY = {
     "exposure_mode": "median", "key": 0.27, "key_pct": 50, "key_exclude_top": 0.10,
     "exposure_bias": 0.0,
     # white balance: neutral surfaces land on a warm-clean white (Planckian target)
-    "wb_target_cct": 5000, "wb_strength": 0.75, "wb_tint": 0.0, "wb_max_mired": 45,
+    "wb_target_cct": 5200, "wb_strength": 0.75, "wb_tint": 0.0, "wb_max_mired": 45,
     "wb_max_warm_mired": 12,
     # local tone mapping: hat-weighted fusion of virtual exposures
     "fusion_mode": "hat", "fusion_evs": [-6.0, -4.5, -3.0, -1.5, 0.0, 1.0],
     "fusion_hat": [0.0, 0.06, 0.88, 0.99], "fusion_ev_prior": 0.5,
-    "fusion_sigma": 0.22, "global_mix": 0.0,
+    "fusion_sigma": 0.22,
+    # skies/views: blend toward one global exposure for natural clouds
+    "sky_global": 0.9, "sky_global_lo": 1.0, "sky_global_hi": 2.4,
+    "sky_global_pct": 50.0, "sky_global_white": 0.60, "sky_global_shoulder": 4.0,
     # levels + tone
     "levels": True, "black_pct": 0.3, "white_pct": 99.5, "white_target": 0.96,
     "max_white_stretch": 1.12,
@@ -19,8 +22,8 @@ DAY = {
     "clarity": 0.35, "clarity_sigma_frac": 0.012, "micro_contrast": 0.20, "micro_sigma_frac": 0.002,
     "desat_highlights": 0.3,
     # colour (Oklab units)
-    "vibrance": 0.35, "saturation": 0.08, "warmth_b": 0.016, "tint_a": 0.0,
-    "sky_sat": 0.10, "sky_deepen": 0.03, "green_warm_deg": -6.0, "green_sat": 0.05,
+    "vibrance": 0.35, "saturation": 0.08, "warmth_b": 0.013, "tint_a": 0.0,
+    "sky_sat": 0.10, "sky_deepen": 0.015, "green_warm_deg": -6.0, "green_sat": 0.05,
     "orange_protect": 0.5,
     # sharpening
     "sharpen_radius": 0.9, "sharpen_amount": 0.55, "web_sharpen_radius": 0.6,

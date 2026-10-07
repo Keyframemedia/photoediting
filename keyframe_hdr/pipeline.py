@@ -86,9 +86,12 @@ def merge_bracket(group: list[dict], p: dict, half: bool = False) -> tuple[np.nd
         # night: decode at daylight balance so the fixed-CCT grade is absolute
         wb = list(r.daylight_whitebalance[:3] if p.get("wb_source") == "daylight"
                   else r.camera_whitebalance[:3])
-    frames = [raw.decode(m["decode_path"], m, m.get("nef_meta"), half=half, wb=wb,
-                         nikon_vignette_strength=p.get("nikon_vignette_strength", 0.75))
-              for m in ordered]
+    frames = []
+    for m in ordered:
+        f = raw.decode(m["decode_path"], m, m.get("nef_meta"), half=half, wb=wb,
+                       nikon_vignette_strength=p.get("nikon_vignette_strength", 0.75))
+        f.rgb = f.rgb.astype(np.float16)  # half the memory; ample precision for merging
+        frames.append(f)
     t1 = time.time()
     merge.align(frames, len(frames) // 2)
     hdr, minfo = merge.merge(frames, deghost=p.get("deghost", True))
@@ -116,7 +119,8 @@ def finish(hdr: np.ndarray, ref_meta: dict, p: dict, info: dict | None = None) -
     elif is_aerial and p.get("level_horizon", True):
         hdr, ginfo = geometry.level(hdr, ref_meta, p)
     t1 = time.time()
-    v, rinfo = render.render(hdr, p, return_info=True)
+    v, rinfo = render.render(hdr, p, return_info=True, inplace=True)
+    del hdr
     t2 = time.time()
     if p.get("retouch"):
         from . import retouch
@@ -156,7 +160,8 @@ def save_jpeg(v: np.ndarray, path: str, quality: int = 95, exif_from: str | None
 
 
 def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
-        only: list[str] | None = None, web_long_edge: int = 2560, work_dir: str | None = None):
+        only: list[str] | None = None, web_long_edge: int = 2560, work_dir: str | None = None,
+        jobs: int = 1, resume: bool = True):
     preset = PRESETS[style]
     work_dir = work_dir or os.path.join(output_dir, ".work")
     os.makedirs(output_dir, exist_ok=True)
@@ -191,7 +196,7 @@ def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
 
     edits_path = os.path.join(output_dir, "edits.json")
     edits = json.load(open(edits_path)) if os.path.exists(edits_path) else {}
-    report = []
+    tasks = []
     for i, g in enumerate(groups, 1):
         names = [os.path.splitext(m["FileName"])[0] for m in sorted(g, key=raw.relative_exposure)]
         key = os.path.splitext(sorted(g, key=lambda m: merge._ts(m))[0]["FileName"])[0]
@@ -200,22 +205,48 @@ def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
         ov = edits.get(key, {})
         if ov.get("skip"):
             continue
-        out_name = f"{i:02d}_{key}.jpg"
-        t = time.time()
-        try:
-            v, info = process_bracket(g, preset, ov, half=half)
-        except Exception as e:  # keep going; report the failure
-            log(f"[{i}/{len(groups)}] {key} FAILED: {e!r}")
-            report.append({"key": key, "error": repr(e)})
-            continue
-        v_full = render.output_sharpen(v, dict(preset, **ov))
-        src = sorted(g, key=raw.relative_exposure)[len(g) // 2]
-        save_jpeg(v_full, os.path.join(output_dir, out_name), 95, exif_from=src["path"])
-        v_web = render.output_sharpen(v, dict(preset, **ov), long_edge=web_long_edge)
-        save_jpeg(v_web, os.path.join(output_dir, "web", out_name), 90, exif_from=src["path"])
-        info.update({"key": key, "output": out_name, "seconds": round(time.time() - t, 1)})
-        report.append(info)
-        log(f"[{i}/{len(groups)}] {key} -> {out_name} ({info['seconds']}s) {info['timing']}")
-        with open(os.path.join(output_dir, "report.json"), "w") as fh:
-            json.dump(report, fh, indent=1, default=str)
+        if resume and os.path.exists(os.path.join(output_dir, f"{i:02d}_{key}.jpg")):
+            continue  # finished in an earlier run
+        tasks.append((i, len(groups), key, g, preset, ov, half, output_dir, web_long_edge))
+    report = []
+    rp = os.path.join(output_dir, "report.json")
+    if resume and os.path.exists(rp):
+        done = {f"{t[0]:02d}_{t[2]}.jpg" for t in tasks}
+        report = [r for r in json.load(open(rp)) if r.get("output") not in done and "error" not in r]
+    if jobs > 1 and len(tasks) > 1:
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=jobs, mp_context=mp.get_context("spawn")) as ex:
+            for info in ex.map(_process_task, tasks):
+                report.append(info)
+                _write_report(output_dir, report)
+    else:
+        for t in tasks:
+            report.append(_process_task(t))
+            _write_report(output_dir, report)
     return report
+
+
+def _write_report(output_dir: str, report: list):
+    with open(os.path.join(output_dir, "report.json"), "w") as fh:
+        json.dump(sorted(report, key=lambda r: r.get("output", r.get("key", ""))), fh, indent=1, default=str)
+
+
+def _process_task(task) -> dict:
+    i, n, key, g, preset, ov, half, output_dir, web_long_edge = task
+    out_name = f"{i:02d}_{key}.jpg"
+    t = time.time()
+    try:
+        v, info = process_bracket(g, preset, ov, half=half)
+    except Exception as e:  # keep going; report the failure
+        import traceback
+        log(f"[{i}/{n}] {key} FAILED: {e!r}")
+        return {"key": key, "error": repr(e), "trace": traceback.format_exc()}
+    p = dict(preset, **ov)
+    src = sorted(g, key=raw.relative_exposure)[len(g) // 2]
+    save_jpeg(render.output_sharpen(v, p), os.path.join(output_dir, out_name), 95, exif_from=src["path"])
+    save_jpeg(render.output_sharpen(v, p, long_edge=web_long_edge),
+              os.path.join(output_dir, "web", out_name), 90, exif_from=src["path"])
+    info.update({"key": key, "output": out_name, "seconds": round(time.time() - t, 1)})
+    log(f"[{i}/{n}] {key} -> {out_name} ({info['seconds']}s) {info['timing']}")
+    return info

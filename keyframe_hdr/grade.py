@@ -126,10 +126,22 @@ def white_balance(rgb: np.ndarray, exposure: float, target_cct: float, strength:
     tx, ty = cct_to_xy(target_cct)
     ty += tint * 0.01
     target = _xy_to_xyz(tx, ty)
+    M, info = wb_matrix(rgb, exposure, target_cct, strength, tint, max_shift_mired,
+                        max_warm_mired, fixed_cct)
+    return np.maximum(_mat(rgb, M), 0), info
+
+
+def wb_matrix(rgb: np.ndarray, exposure: float, target_cct: float, strength: float,
+              tint: float = 0.0, max_shift_mired: float = 45.0,
+              max_warm_mired: float = 12.0, fixed_cct: float | None = None) -> tuple[np.ndarray, dict]:
+    """The 3x3 (Rec.2020 linear) white-balance matrix; see white_balance()."""
+    D65 = _xy_to_xyz(0.31271, 0.32902)
+    tx, ty = cct_to_xy(target_cct)
+    ty += tint * 0.01
+    target = _xy_to_xyz(tx, ty)
     if fixed_cct:
         sx, sy = cct_to_xy(fixed_cct)
-        M = adapt_matrix(_xy_to_xyz(sx, sy), target)
-        return np.maximum(_mat(rgb, M), 0), {"fixed_cct": fixed_cct}
+        return adapt_matrix(_xy_to_xyz(sx, sy), target), {"fixed_cct": fixed_cct}
     est = estimate_neutral(rgb, exposure)
     info = {}
     if est is None:
@@ -157,9 +169,8 @@ def white_balance(rgb: np.ndarray, exposure: float, target_cct: float, strength:
         target = _xy_to_xyz(tx2, ty2 + tint * 0.01)
     info["shift_mired"] = round(float(np.clip(need, -lim, lim)), 1)
     M = adapt_matrix(src / src[1], target / target[1])
-    out = _mat(rgb, M)
     info["matrix"] = M.round(4).tolist()
-    return np.maximum(out, 0), info
+    return M, info
 
 
 # ---------------------------------------------------------------------------

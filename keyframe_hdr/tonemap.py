@@ -127,7 +127,7 @@ def fuse_luminance(Y: np.ndarray, evs=(-4.0, -2.5, -1.0, 0.0, 1.0), sigma: float
 
 
 def apply_luminance(rgb: np.ndarray, Y: np.ndarray, Yd_lin: np.ndarray,
-                    desat_highlights: float = 0.6) -> np.ndarray:
+                    desat_highlights: float = 0.6, ratio_ref: float | None = None) -> np.ndarray:
     """Scale linear RGB so its luminance becomes Yd_lin, preserving ratios.
     Very bright scene areas (compressed hard) are nudged toward neutral to avoid
     the neon look of ratio-preserving tone mapping."""
@@ -135,7 +135,8 @@ def apply_luminance(rgb: np.ndarray, Y: np.ndarray, Yd_lin: np.ndarray,
     out = rgb * ratio[:, :, None]
     # where compression is strong (ratio << exposure), mix a touch toward luminance
     if desat_highlights > 0:
-        comp = np.clip(1 - ratio / np.percentile(ratio, 60), 0, 1) * np.clip(Yd_lin / 0.5, 0, 1)
+        rr = ratio_ref if ratio_ref is not None else np.percentile(ratio, 60)
+        comp = np.clip(1 - ratio / rr, 0, 1) * np.clip(Yd_lin / 0.5, 0, 1)
         m = (desat_highlights * comp)[:, :, None]
         out = out * (1 - m * 0.35) + Yd_lin[:, :, None] * (m * 0.35)
     return out

@@ -8,7 +8,12 @@ from . import grade, tonemap
 from .merge import luminance
 
 
-def render(hdr: np.ndarray, p: dict, return_info: bool = False):
+STRIP = 512  # rows per strip for the pixel-wise colour stages (bounds peak memory)
+
+
+def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = False):
+    """inplace=True reuses (and destroys) `hdr`'s buffer - the pipeline uses this
+    to keep peak memory down at 45 MP."""
     info = {}
     Y = luminance(hdr)
     # 1. exposure: anchor the room's whites, keep the median in a sane range
@@ -23,15 +28,24 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False):
                                   exclude_top=p.get("key_exclude_top", 0.08))
     k *= 2.0 ** p.get("exposure_bias", 0.0)
     info["exposure"] = float(k)
-    rgb = hdr * k
+    if inplace:
+        rgb = hdr
+        rgb *= np.float32(k)
+    else:
+        rgb = hdr * np.float32(k)
+    del Y
 
-    # 2. white balance toward the house white
+    # 2. white balance toward the house white (matrix measured globally, applied in strips)
     if p.get("wb_strength", 0) > 0 or p.get("wb_target_cct"):
-        rgb, wbi = grade.white_balance(rgb, 1.0, p["wb_target_cct"], p.get("wb_strength", 0.7),
-                                       tint=p.get("wb_tint", 0.0),
-                                       max_shift_mired=p.get("wb_max_mired", 45),
-                                       max_warm_mired=p.get("wb_max_warm_mired", 12),
-                                       fixed_cct=p.get("wb_fixed_cct"))
+        M, wbi = grade.wb_matrix(rgb, 1.0, p["wb_target_cct"], p.get("wb_strength", 0.7),
+                                 tint=p.get("wb_tint", 0.0),
+                                 max_shift_mired=p.get("wb_max_mired", 45),
+                                 max_warm_mired=p.get("wb_max_warm_mired", 12),
+                                 fixed_cct=p.get("wb_fixed_cct"))
+        Mt = M.T.astype(np.float32)
+        for r0 in range(0, rgb.shape[0], STRIP):
+            sl = rgb[r0:r0 + STRIP]
+            np.maximum(sl @ Mt, 0, out=sl)
         info["wb"] = wbi
     Y = luminance(rgb)
 
@@ -41,9 +55,27 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False):
                                 contrast_weight=p.get("fusion_contrast_weight", 0.0),
                                 mode=p.get("fusion_mode", "hat"), ev_prior=p.get("fusion_ev_prior", 0.6),
                                 hat=tuple(p.get("fusion_hat", (0.03, 0.14, 0.86, 0.985))))
-    # blend some global (non-local) rendering back for depth: pure fusion is flat
-    Yg = tonemap.srgb_encode(np.clip(Y / (1 + Y / p.get("global_white", 6.0)), 0, 1))
-    Yd = (1 - p.get("global_mix", 0.0)) * Yd + p.get("global_mix", 0.0) * Yg
+    # Bright regions (sky, views) take a single *global* exposure instead of the
+    # locally adapted fusion: keeps natural cloud-to-blue contrast (no grey,
+    # crunchy "HDR skies") while rooms keep the local balancing. Weighting is a
+    # per-pixel function of luminance only, so it cannot create halos.
+    if p.get("sky_global", 0) > 0:
+        lY = np.log2(np.maximum(Y, 1e-7))
+        lk = np.log2(tonemap_key(Y, p))
+        bright = tonemap._smoothstep(lk + p.get("sky_global_lo", 1.2), lk + p.get("sky_global_hi", 2.6), lY)
+        sel = bright[:: max(1, Y.shape[0] // 500), :: max(1, Y.shape[1] // 500)] > 0.5
+        ysm = Y[:: max(1, Y.shape[0] // 500), :: max(1, Y.shape[1] // 500)]
+        if sel.sum() > 200:
+            # anchor the sky's median (not its brightest point - that is the sun)
+            ref = float(np.percentile(ysm[sel], p.get("sky_global_pct", 50.0)))
+            x = Y * (p.get("sky_global_white", 0.60) / max(ref, 1e-7))
+            n = p.get("sky_global_shoulder", 4.0)
+            x = x / np.power(1 + np.power(x, n), 1 / n)  # soft shoulder into white
+            Yg = tonemap.srgb_encode(x)
+            # never let the global version make a region darker than the room's whites
+            w = bright * p["sky_global"]
+            Yd = Yd * (1 - w) + Yg * w
+            info["sky_global_ref"] = round(ref, 4)
 
     # 4. levels: black point from the image (Blacks slider to the clipping point);
     #    whites only nudged up if the brightest areas fall short, never squashed.
@@ -64,19 +96,31 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False):
         Yd = grade.clarity(Yd, p["micro_contrast"], p.get("micro_sigma_frac", 0.0025) * max(Yd.shape))
 
     Yd_lin = tonemap.srgb_decode(Yd).astype(np.float32)
-    rgb = tonemap.apply_luminance(rgb, Y, Yd_lin, desat_highlights=p.get("desat_highlights", 0.6))
+    del Yd
+    st = (max(1, Y.shape[0] // 500), max(1, Y.shape[1] // 500))
+    ratio_ref = float(np.percentile(Yd_lin[::st[0], ::st[1]] / np.maximum(Y[::st[0], ::st[1]], 1e-7), 60))
 
-    # 5. colour in Oklab
-    lab = grade.rec2020_to_oklab(rgb)
-    lab = grade.colour_grade(lab, p)
-    rgb = grade.oklab_to_rec2020(lab)
-
-    # 6. to sRGB
-    s = grade.gamut_map_srgb(rgb.astype(np.float32))
-    v = tonemap.srgb_encode(np.clip(s, 0, 1)).astype(np.float32)
+    # 5-6. per-pixel stages in strips, written back into rgb's buffer:
+    #      luminance -> colour (Oklab) -> gamut map -> sRGB encode
+    desat = p.get("desat_highlights", 0.6)
+    for r0 in range(0, rgb.shape[0], STRIP):
+        sl = slice(r0, r0 + STRIP)
+        c = tonemap.apply_luminance(rgb[sl], Y[sl], Yd_lin[sl], desat_highlights=desat, ratio_ref=ratio_ref)
+        lab = grade.colour_grade(grade.rec2020_to_oklab(c), p)
+        c = grade.gamut_map_srgb(grade.oklab_to_rec2020(lab).astype(np.float32))
+        rgb[sl] = tonemap.srgb_encode(np.clip(c, 0, 1))
+    v = rgb
     if return_info:
         return v, info
     return v
+
+
+def tonemap_key(Y: np.ndarray, p: dict) -> float:
+    """Median luminance of the non-window part of the (already exposed) image."""
+    s = Y[:: max(1, Y.shape[0] // 400), :: max(1, Y.shape[1] // 400)].ravel()
+    s = s[s > 0]
+    hi = np.percentile(s, 100 * (1 - p.get("key_exclude_top", 0.1)))
+    return float(np.median(s[s < hi]))
 
 
 def output_sharpen(v: np.ndarray, p: dict, long_edge: int | None = None) -> np.ndarray:

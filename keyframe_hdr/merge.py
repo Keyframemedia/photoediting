@@ -106,7 +106,9 @@ def align(frames: list[Frame], ref_idx: int, motion: str = "auto", size: int = 2
         if disp < 0.35:
             continue
         flags = cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP
-        f.rgb = cv2.warpPerspective(f.rgb, Wf, (W, H), flags=flags, borderMode=cv2.BORDER_REFLECT)
+        dt = f.rgb.dtype
+        f.rgb = cv2.warpPerspective(f.rgb.astype(np.float32), Wf, (W, H), flags=flags,
+                                    borderMode=cv2.BORDER_REFLECT).astype(dt)
         f.clip = cv2.warpPerspective(f.clip, Wf, (W, H), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
                                      borderMode=cv2.BORDER_REFLECT)
     return frames
@@ -153,6 +155,7 @@ def merge(frames: list[Frame], deghost: bool = True) -> tuple[np.ndarray, dict]:
 
     H, W = ref.rgb.shape[:2]
     acc = np.zeros((H, W, 3), np.float32)
+    tmp = np.empty((H, W, 3), np.float32)
     wsum = np.zeros((H, W), np.float32)
 
     # Ghost reference: reference frame, falling back to shorter frames where it clips.
@@ -185,8 +188,19 @@ def merge(frames: list[Frame], deghost: bool = True) -> tuple[np.ndarray, dict]:
             w *= (1 - ghost)
             if k == 0:
                 w = np.maximum(w, 1e-4)
-        acc += f.rgb * (w * scales[k])[:, :, None]
+        np.multiply(f.rgb, (w * np.float32(scales[k]))[:, :, None], out=tmp)
+        acc += tmp
         wsum += w
-    hdr = acc / np.maximum(wsum, 1e-8)[:, :, None]
+    del tmp
+    acc /= np.maximum(wsum, 1e-8)[:, :, None]
+    hdr = acc
+    # Highlights clipped even in the shortest frame (sun, glare on water): the
+    # surviving channel ratios are meaningless and turn magenta after white
+    # balance. Render them as neutral white at the brightest channel's level.
+    c = frames[0].clip
+    if c.max() > 0:
+        mx = hdr.max(axis=2, keepdims=True)
+        cc = c[:, :, None]
+        hdr = hdr * (1 - cc) + mx * cc
     info["scales"] = [round(s, 5) for s in scales]
     return hdr.astype(np.float32), info

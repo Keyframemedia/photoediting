@@ -13,9 +13,11 @@ def main():
     ap.add_argument("--half", action="store_true", help="half-resolution preview run (fast)")
     ap.add_argument("--web-size", type=int, default=2560, help="long edge of web exports")
     ap.add_argument("--work-dir", help="where converted DNGs are cached")
+    ap.add_argument("--jobs", type=int, default=1, help="brackets processed in parallel (~8 GB RAM each)")
+    ap.add_argument("--force", action="store_true", help="re-process brackets that already have output")
     a = ap.parse_args()
     run(a.input_dir, a.output_dir, a.style, half=a.half, only=a.only,
-        web_long_edge=a.web_size, work_dir=a.work_dir)
+        web_long_edge=a.web_size, work_dir=a.work_dir, jobs=a.jobs, resume=not a.force)
 
 
 if __name__ == "__main__":

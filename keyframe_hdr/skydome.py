@@ -36,13 +36,12 @@ LIBRARY = {
     "clouds": ["kloofendal_48d_partly_cloudy_puresky"],
     "clear": ["syferfontein_18d_clear_puresky", "kloofendal_43d_clear_puresky"],
     "twilight_clear": ["rosendal_park_sunset_puresky"],
-    "twilight_purple": ["qwantani_dusk_2_puresky"],
     "twilight_clouds": ["belfast_sunset_puresky"],
 }
 # viewing direction relative to the dome's sun: (centre, half range) in degrees.
 # Daylight looks away from the sun; twilight keeps the afterglow off to one side.
 AIM = {"clouds": (180.0, 70.0), "clear": (180.0, 70.0),
-       "twilight_clear": (140.0, 60.0), "twilight_purple": (140.0, 60.0),
+       "twilight_clear": (140.0, 60.0),
        "twilight_clouds": (140.0, 60.0)}
 
 BAND_TOP, BAND_BOTTOM = 90.0, -10.0  # elevation range kept from each dome (deg)
@@ -277,3 +276,124 @@ def _local_sky(hdr: np.ndarray, alpha: np.ndarray, scale: int = 4) -> np.ndarray
     fill = cv2.resize(fill, (W, H), interpolation=cv2.INTER_LINEAR)
     pure = np.clip((alpha - 0.97) / 0.03, 0, 1)[..., None]
     return hdr * pure + fill * (1 - pure)
+
+
+# ---------------------------------------------------------------------------
+# Twilight gradients
+# ---------------------------------------------------------------------------
+# Keyframe's delivered twilight skies, measured on the house's own edits (Water
+# Lily, 2025): display colour (Oklab L, a, b of the finished sRGB) against
+# elevation in degrees. Peach on the horizon, pink through the middle, lavender
+# blue overhead, the same on every frame of a set. The domes give the sky its
+# shape (soft wisps or clouds, placed per camera angle) and a clean composite;
+# this gives it the house colour, after the grade, so exposure and white balance
+# never shift it.
+GRADIENTS = {
+    "natural": [(-10, .905, .022, .058), (2, .900, .025, .060), (6, .880, .032, .062),
+                (10, .862, .043, .052), (14, .852, .044, .030), (18, .840, .041, .012),
+                (22, .828, .043, .004), (26, .812, .046, -.004), (30, .796, .040, -.016),
+                (34, .786, .028, -.030), (38, .782, .016, -.044), (42, .778, .010, -.052),
+                (52, .768, .002, -.062), (66, .755, -.003, -.069), (90, .742, -.005, -.072)],
+    "purple": [(-10, .890, .032, .046), (2, .885, .036, .046), (8, .866, .048, .040),
+               (14, .850, .056, .016), (20, .836, .060, -.004), (26, .818, .060, -.022),
+               (32, .796, .050, -.044), (40, .776, .038, -.064), (52, .762, .028, -.078),
+               (90, .740, .020, -.086)],
+}
+
+
+def elevation_rows(W: int, f_px: float, pp: tuple[float, float], R: np.ndarray, y0: int, y1: int) -> np.ndarray:
+    """Elevation (deg) of every pixel in rows y0..y1 of the upright image."""
+    R = np.asarray(R, np.float64)
+    xs = ((np.arange(W, dtype=np.float64) - pp[0]) / f_px)[None, :]
+    ys = ((np.arange(y0, y1, dtype=np.float64) - pp[1]) / f_px)[:, None]
+    dx = R[0, 0] * xs + R[0, 1] * ys + R[0, 2]
+    dy = R[1, 0] * xs + R[1, 1] * ys + R[1, 2]
+    dz = R[2, 0] * xs + R[2, 1] * ys + R[2, 2]
+    return np.degrees(np.arctan2(-dy, np.hypot(dx, dz))).astype(np.float32)
+
+
+def azimuth_rows(W: int, f_px: float, pp: tuple[float, float], R: np.ndarray, y0: int, y1: int) -> np.ndarray:
+    """Azimuth (deg, relative to the camera's heading) of every pixel in rows y0..y1."""
+    R = np.asarray(R, np.float64)
+    xs = ((np.arange(W, dtype=np.float64) - pp[0]) / f_px)[None, :]
+    ys = ((np.arange(y0, y1, dtype=np.float64) - pp[1]) / f_px)[:, None]
+    dx = R[0, 0] * xs + R[0, 1] * ys + R[0, 2]
+    dz = R[2, 0] * xs + R[2, 1] * ys + R[2, 2]
+    return np.degrees(np.arctan2(dx, dz)).astype(np.float32)
+
+
+def _wisp_field(seed: str | int, res: float = 0.25) -> np.ndarray:
+    """Thin, long streaks of high cloud over the whole sky (azimuth x elevation,
+    `res` degrees per cell, row r = elevation r * res), fixed for a job's seed so
+    every frame of a shoot sees the same wisps from its own angle."""
+    rng = np.random.default_rng(int(hashlib.sha1(f"wisps{seed}".encode()).hexdigest()[:8], 16))
+    W, H = int(round(360 / res)), int(round(90 / res))
+    f = np.zeros((H, W), np.float32)
+    for sx, sy, amp in ((56.0, 4.5, 1.0), (24.0, 2.4, 0.55), (10.0, 1.2, 0.3)):
+        n = rng.standard_normal((H, W)).astype(np.float32)
+        pad = int(3 * sx)
+        n = np.concatenate([n[:, -pad:], n, n[:, :pad]], 1)  # wrap in azimuth
+        n = cv2.GaussianBlur(n, (0, 0), sigmaX=sx, sigmaY=sy)[:, pad:-pad]
+        f += amp * n / max(float(n.std()), 1e-6)
+    f /= max(float(f.std()), 1e-6)
+    return np.clip((f - 0.5) / 1.3, 0, 1) ** 1.5
+
+
+def paint_gradient(v: np.ndarray, alpha: np.ndarray, f_px: float, pp: tuple[float, float], R: np.ndarray,
+                   gradient: str = "natural", texture: float = 1.0, strength: float = 1.0,
+                   wisps: float = 0.0, yaw: float = 0.0, seed: str | int = 0,
+                   strip: int = 512) -> tuple[np.ndarray, dict]:
+    """Draw the sky of a finished sRGB image (in place) to a house gradient.
+
+    Each sky pixel moves by the difference between the gradient at its elevation
+    and the local mean of the sky as rendered, scaled by the matte, so cloud
+    detail is kept (`texture` scales it) and edge pixels move only by their sky
+    share. `wisps` adds thin high streaks lit like the sky ~12 degrees lower (pinker
+    overhead, peachier low down), placed by azimuth and elevation."""
+    from .grade import gamut_map_srgb, oklab_to_rec2020, rec2020_to_oklab
+    from .tonemap import srgb_decode, srgb_encode
+    stops = np.array(GRADIENTS[gradient], np.float32)
+    H, W = alpha.shape
+    if alpha.mean() < 0.002:
+        return v, {"gradient": gradient, "applied": False}
+    to2020 = _709_TO_2020.T.astype(np.float32)
+    # local mean of the rendered sky, by normalised convolution at low resolution
+    sc = max(1, int(round(max(H, W) / 512)))
+    h, w = max(1, H // sc), max(1, W // sc)
+    lab_s = rec2020_to_oklab(srgb_decode(cv2.resize(v, (w, h), interpolation=cv2.INTER_AREA)) @ to2020)
+    wt = (cv2.resize(alpha, (w, h), interpolation=cv2.INTER_AREA) > 0.95).astype(np.float32)
+    sig = max(2.0, 0.03 * max(h, w))
+    num = cv2.GaussianBlur(lab_s * wt[..., None], (0, 0), sig)
+    den = cv2.GaussianBlur(wt, (0, 0), sig)[..., None]
+    mean_s = np.where(den > 1e-3, num / np.maximum(den, 1e-4), lab_s).astype(np.float32)
+    gx = ((np.arange(W, dtype=np.float32) + 0.5) / sc - 0.5)[None, :]
+    field = _wisp_field(seed) if wisps > 0 else None
+    res = 0.25
+    for y0 in range(0, H, strip):
+        y1 = min(H, y0 + strip)
+        a = alpha[y0:y1]
+        if a.max() < 0.002:
+            continue
+        el = elevation_rows(W, f_px, pp, R, y0, y1)
+        tgt = np.stack([np.interp(el, stops[:, 0], stops[:, i]) for i in (1, 2, 3)], -1).astype(np.float32)
+        if field is not None:
+            az = azimuth_rows(W, f_px, pp, R, y0, y1) + np.float32(yaw)
+            u = (np.mod(az, 360.0) / res).astype(np.float32)
+            vv = (np.clip(el, 0, 89.9) / res).astype(np.float32)
+            wsp = cv2.remap(field, u, vv, cv2.INTER_CUBIC, borderMode=cv2.BORDER_WRAP)
+            env = np.clip((el - 3) / 7, 0, 1) * np.clip((60 - el) / 25, 0, 1)
+            lit = np.stack([np.interp(el - 12, stops[:, 0], stops[:, i]) for i in (1, 2, 3)], -1).astype(np.float32)
+            lit[..., 0] += 0.012
+            lit[..., 1] *= 1.35  # rose rather than orange
+            lit[..., 2] = lit[..., 2] * 0.9 + 0.004
+            tgt += (np.clip(wsp, 0, 1) * env * np.float32(wisps))[..., None] * (lit - tgt)
+        gy = ((np.arange(y0, y1, dtype=np.float32) + 0.5) / sc - 0.5)[:, None]
+        mean = cv2.remap(mean_s, np.broadcast_to(gx, el.shape).astype(np.float32),
+                         np.broadcast_to(gy, el.shape).astype(np.float32), cv2.INTER_LINEAR,
+                         borderMode=cv2.BORDER_REPLICATE)
+        lab = rec2020_to_oklab(srgb_decode(v[y0:y1]) @ to2020)
+        dev = lab - mean
+        a3 = (a * np.float32(strength))[..., None]
+        lab = lab + a3 * ((tgt - mean) + np.float32(texture - 1.0) * dev)
+        v[y0:y1] = srgb_encode(np.clip(gamut_map_srgb(oklab_to_rec2020(lab).astype(np.float32)), 0, 1))
+    return v, {"gradient": gradient, "applied": True, "texture": texture, "wisps": wisps}

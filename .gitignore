@@ -13,3 +13,4 @@ __pycache__/
 output/
 .work/
 kf_jobs/
+!keyframe_hdr/luts/*.npy

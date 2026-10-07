@@ -5,9 +5,13 @@ fitted on matched pairs (the same bracket, edited by the pipeline and by hand).
 The tone mapping, windows and local contrast stay the pipeline's; the LUT carries
 the colour rendering: how white walls, timber, greens and sky blue are drawn.
 
-Fitting is a smoothed least-squares problem on a lattice with trilinear
-weights, so cells the samples never reach are filled smoothly from their
-neighbours instead of being left at identity.
+Fitting is a smoothed least-squares problem on a coarse lattice (13^3) with
+trilinear weights, so cells the samples never reach are filled smoothly from
+their neighbours instead of being left at identity. The result is then baked
+through a cubic spline into a dense 65^3 table: a trilinear LUT has a slope
+kink at every cell boundary, and on a smooth ceiling or sky a fine, freely
+fitted lattice shows those kinks (and any wiggle between nodes) as contour
+rings. Coarse nodes + spline + dense table keeps every gradient smooth.
 """
 from __future__ import annotations
 
@@ -50,7 +54,7 @@ def apply(rgb: np.ndarray, lut: np.ndarray, strength: float = 1.0, rows: int = 5
     return rgb
 
 
-def fit(src: np.ndarray, dst: np.ndarray, n: int = 17, smooth: float = 0.3, weight: np.ndarray | None = None) -> np.ndarray:
+def fit(src: np.ndarray, dst: np.ndarray, n: int = 13, smooth: float = 1.0, weight: np.ndarray | None = None) -> np.ndarray:
     """Least-squares LUT with a Laplacian smoothness prior toward identity-shaped
     differences: minimise sum w*|T(src) - dst|^2 + smooth * N/n^3 * |L (T - I)|^2."""
     import scipy.sparse as sp
@@ -91,6 +95,17 @@ def fit(src: np.ndarray, dst: np.ndarray, n: int = 17, smooth: float = 0.3, weig
     return np.clip(out, 0, 1).reshape(n, n, n, 3)
 
 
+def bake(lut: np.ndarray, m: int = 65) -> np.ndarray:
+    """Resample a fitted lattice to an m^3 table through a cubic spline."""
+    from scipy.ndimage import map_coordinates
+    n = lut.shape[0]
+    g = np.linspace(0, n - 1, m)
+    grid = np.stack(np.meshgrid(g, g, g, indexing="ij"), 0)
+    out = np.stack([map_coordinates(lut[..., c].astype(np.float64), grid, order=3, mode="nearest")
+                    for c in range(3)], -1)
+    return np.clip(out, 0, 1).astype(np.float32)
+
+
 def load(name: str) -> np.ndarray | None:
     p = os.path.join(LUT_DIR, name if name.endswith(".npy") else name + ".npy")
-    return np.load(p) if os.path.exists(p) else None
+    return np.load(p).astype(np.float32) if os.path.exists(p) else None

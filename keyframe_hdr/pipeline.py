@@ -134,12 +134,22 @@ def finish(hdr: np.ndarray, ref_meta: dict, p: dict, info: dict | None = None) -
         hdr, ginfo = geometry.upright(hdr, ref_meta, p)
     elif is_aerial and p.get("level_horizon", True):
         hdr, ginfo = geometry.level(hdr, ref_meta, p)
+    if p.get("interior") and not is_aerial:
+        # interiors get their own settings (twilight: tungsten-warm, not orange). An
+        # interior shows almost no sky outside windows; ADE20K calls sky seen
+        # through glass "windowpane", so the plain pass separates the two cleanly.
+        from . import sky as skymod
+        ext = float((skymod.sky_probability(hdr, windows=False) > 0.5).mean())
+        info["scene"] = "exterior" if ext > p.get("exterior_min_sky", 0.05) else "interior"
+        if info["scene"] == "interior":
+            p = {**p, **p["interior"]}
     sky_alpha = None
     if p.get("sky_dome"):
         from . import skydome
         hdr, sinfo = skydome.replace(hdr, p["sky_dome"], ref_meta, ginfo,
                                      shot_index=p.get("shot_index", 0), seed=p.get("sky_seed", 0),
-                                     ref_yaw=p.get("sky_ref_yaw"), brightness=p.get("sky_brightness", 1.0))
+                                     ref_yaw=p.get("sky_ref_yaw"), brightness=p.get("sky_brightness", 1.0),
+                                     name=p.get("sky_dome_name"))
         sky_alpha = sinfo.pop("_alpha", None)
         info["sky"] = sinfo
     if p.get("sky_purple_deg") and sky_alpha is None:
@@ -150,9 +160,17 @@ def finish(hdr: np.ndarray, ref_meta: dict, p: dict, info: dict | None = None) -
         from . import lights
         emit = lights.emitter_map(hdr, sky_alpha)
     t1 = time.time()
+    H, W = hdr.shape[:2]
     v, rinfo = render.render(hdr, p, return_info=True, inplace=True,
                              sky=sky_alpha if p.get("sky_purple_deg") else None)
-    del hdr, sky_alpha
+    del hdr
+    if p.get("sky_gradient") and sky_alpha is not None and info.get("sky", {}).get("applied"):
+        from . import skydome
+        f_px, pp, R = skydome.geometry_for(ginfo, ref_meta, W, H)
+        v, info["sky"]["paint"] = skydome.paint_gradient(
+            v, sky_alpha, f_px, pp, R, p["sky_gradient"], texture=p.get("sky_texture", 1.0),
+            wisps=p.get("sky_wisps", 0.0), yaw=info["sky"].get("yaw", 0.0), seed=p.get("sky_seed", 0))
+    del sky_alpha
     if emit is not None:
         v = lights.enhance(v, emit, p.get("lights_glow", 0.35), p.get("lights_pool", 0.18),
                            p.get("lights_warmth", 0.04))

@@ -79,22 +79,46 @@ Portal side (repo `Keyframemedia/NEW-keyframe-portal`):
 | Clean | Edge-aware chroma and luminance noise reduction, purple-fringe suppression. |
 | Upright | Detects vertical lines, estimates camera pitch/roll with the real focal length and re-projects to a level camera (two-point perspective), then crops to the largest clean 3:2 frame. No upsampling. Skipped for drone shots. |
 | Tone | Hat-weighted exposure fusion of virtual exposures (each area gets the brightest rendering that is not clipped), so rooms are bright and walls clean, not the grey "HDR look". Skies and views blend toward one global exposure, so clouds stay white and natural instead of crunchy. Auto black point, gentle white stretch, S-curve. |
-| Grade | White balance measured off the room's own neutral surfaces and set to a warm-clean white (Planckian 5200 K). Sky-lit exteriors are only warmed a little, so blue skies stay blue. Clarity is weighted to midtones and switched off in skies. Oklab vibrance, richer sky blue, foliage pulled warm, timber protected from oversaturation. |
+| Grade | White balance measured off the room's own neutral surfaces and set to a warm-clean white (Planckian 5600 K). Sky-lit exteriors are only warmed a little, so blue skies stay blue. Clarity is weighted to midtones and switched off in skies. Oklab vibrance, foliage pulled warm, timber protected from oversaturation. Last, the house LUT (learned from Keyframe's delivered edits) sets the final colour rendering. |
 | Output | Gamut-mapped to sRGB (soft, no clipped colours), output-sharpened per size, sRGB ICC + camera EXIF embedded. |
 
-Everything is in `keyframe_hdr/presets.py` (`DAY`, `NIGHT`).
+Everything is in `keyframe_hdr/presets.py` (`DAY`, `TWILIGHT`, `NIGHT`).
 
 ## Styles
 
-- **day**: the signature daylight look described above. Tuned on a real 50-scene shoot.
-- **twilight** (`night` is an alias): white balance is fixed rather than auto, so interiors glow
-  warm against a deep blue sky. It has a darker key, a wider exposure range for light fittings,
-  stronger noise reduction and a richer sky.
-  - `--look purple` turns only the sky toward violet.
+- **day**: the signature daylight look, fitted to Keyframe's own delivered edits (see
+  "How the house look was fitted" below).
+- **twilight**: Keyframe's delivered dusk look, fitted the same way on Water Lily (dusk):
+  bright facades, warm timber, glowing windows.
+  - White balance is fixed rather than auto. Exteriors are rendered warm (8400 K source to a
+    5200 K white). Interiors are found automatically (almost no sky outside the windows) and
+    rendered tungsten-warm cream at 4200 K, with the dusk blue left in the windows.
+  - With a replaced sky (`--sky clear|clouds`) the sky is drawn to the house twilight gradient,
+    measured on the delivered dusk images: peach on the horizon, pink through the middle,
+    lavender blue overhead. It is the same on every frame of a set whatever the exposure, and
+    has soft, thin wisps placed by real azimuth and elevation, so they move as the camera turns.
+  - `--look purple` uses a more violet gradient (or, with the original sky, turns that sky
+    toward violet).
   - Lights enhancement (on by default; `--no-lights` turns it off) finds every lamp, downlight,
     wall light and lit window, adds a soft glow in its own colour, and lifts the pools of light
     they throw.
-  - **Tuned blind.** It needs one real twilight set to finalise.
+- **night**: the earlier, moodier dusk look (darker key, deep blue sky), kept for reference.
+
+## How the house look was fitted
+
+Each bracket of a delivered shoot was merged, rendered by the pipeline and aligned (ORB features
+and a homography) to Keyframe's delivered JPEG of the same frame.
+1. The tone and colour parameters were searched to minimise the Oklab difference over all pairs.
+   Half the pairs were held out to check it generalises. Image statistics (brightness
+   percentiles, local contrast, chroma) are matched as well, because a pixel-wise difference on
+   slightly misaligned pairs on its own rewards a flat image.
+2. For day, a 3D LUT (`keyframe_hdr/luts/day.npy`) carries the remaining colour rendering:
+   creamy whites, timber, greens and sky blue. It is fitted on a coarse 13^3 lattice with a
+   smoothness prior, then baked through a cubic spline into a 65^3 table, so smooth ceilings
+   and skies never band.
+3. For twilight the sky was masked out of the comparison, because the delivered skies are
+   replaced. A LUT didn't generalise on the four pairs available, so twilight uses fitted
+   parameters only.
 
 ## Sky replacement (`--sky clouds|clear`)
 
@@ -115,8 +139,8 @@ own direction, so the clouds change naturally from frame to frame instead of rep
 
 | Option | Daytime dome | Twilight dome |
 |---|---|---|
-| clouds | Kloofendal 48d partly cloudy / Kloofendal 38d | Belfast sunset |
-| clear | Syferfontein 18d clear / Kloofendal 43d clear | Rosendal park sunset, or Qwantani dusk 2 with the purple look |
+| clouds | Kloofendal 48d partly cloudy | Belfast sunset (its clouds, in the house gradient) |
+| clear | Syferfontein 18d clear / Kloofendal 43d clear | Rosendal park sunset (its shape, in the house gradient) |
 
 The domes download on first use (~250 MB each at 16k) into `~/.cache/keyframe_skies`.
 
@@ -206,8 +230,9 @@ and a 50-scene shoot takes about 1.5-2 hours. `--half` gives a quick quarter-siz
 
 - **Inpainted areas** are a little softer than their surroundings at 100%, because LaMa works
   at 512 px. They're invisible at listing sizes. Reflections in glass hide it best.
-- **Twilight preset** (looks and lights enhancement) hasn't been tuned on real twilight brackets
-  yet.
+- **Twilight** is fitted on one dusk shoot (Water Lily) and checked against a second
+  (Foxglove). Interiors at dusk had no matched pairs, so their white balance was set by eye
+  against Foxglove's delivered interiors.
 - **Canon CR3/CR2** go through the same Adobe DNG Converter step as Nikon, which gives Adobe's
   lens corrections. This hasn't been run on a real Canon shoot yet.
 - **Sky replacement** works best from a curated library of clean, ungraded sky photos. Skies cut

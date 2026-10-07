@@ -74,7 +74,6 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = 
             n = p.get("sky_global_shoulder", 4.0)
             x = x / np.power(1 + np.power(x, n), 1 / n)  # soft shoulder into white
             Yg = tonemap.srgb_encode(x)
-            # never let the global version make a region darker than the room's whites
             w = bright * p["sky_global"]
             Yd = Yd * (1 - w) + Yg * w
             info["sky_global_ref"] = round(ref, 4)

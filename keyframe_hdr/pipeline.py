@@ -161,7 +161,7 @@ def save_jpeg(v: np.ndarray, path: str, quality: int = 95, exif_from: str | None
 
 def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
         only: list[str] | None = None, web_long_edge: int = 2560, work_dir: str | None = None,
-        jobs: int = 1, resume: bool = True):
+        jobs: int = 1, resume: bool = True, reverse: bool = False):
     preset = PRESETS[style]
     work_dir = work_dir or os.path.join(output_dir, ".work")
     os.makedirs(output_dir, exist_ok=True)
@@ -207,7 +207,9 @@ def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
             continue
         if resume and os.path.exists(os.path.join(output_dir, f"{i:02d}_{key}.jpg")):
             continue  # finished in an earlier run
-        tasks.append((i, len(groups), key, g, preset, ov, half, output_dir, web_long_edge))
+        tasks.append((i, len(groups), key, g, preset, ov, half, output_dir, web_long_edge, resume))
+    if reverse:
+        tasks.reverse()
     report = []
     rp = os.path.join(output_dir, "report.json")
     if resume and os.path.exists(rp):
@@ -218,13 +220,55 @@ def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
         from concurrent.futures import ProcessPoolExecutor
         with ProcessPoolExecutor(max_workers=jobs, mp_context=mp.get_context("spawn")) as ex:
             for info in ex.map(_process_task, tasks):
-                report.append(info)
-                _write_report(output_dir, report)
+                if info is not None:
+                    report.append(info)
+                    _merge_report(output_dir, info)
     else:
         for t in tasks:
-            report.append(_process_task(t))
-            _write_report(output_dir, report)
+            info = _process_task(t)
+            if info is not None:
+                report.append(info)
+                _merge_report(output_dir, info)
     return report
+
+
+def _merge_report(output_dir: str, info: dict):
+    """Add one result to report.json, tolerating other processes writing it too."""
+    rp = os.path.join(output_dir, "report.json")
+    with open(rp + ".lock", "w") as lk:
+        import fcntl
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        cur = json.load(open(rp)) if os.path.exists(rp) else []
+        cur = [r for r in cur if r.get("output", r.get("key")) != info.get("output", info.get("key"))]
+        cur.append(info)
+        _write_report(output_dir, cur)
+
+
+def _claim(output_dir: str, out_name: str, skip_existing: bool = True) -> bool:
+    """Claim a bracket so several processes can share one output folder. A lock
+    left by a process that no longer exists is taken over."""
+    if skip_existing and os.path.exists(os.path.join(output_dir, out_name)):
+        return False
+    ld = os.path.join(output_dir, ".locks")
+    os.makedirs(ld, exist_ok=True)
+    lp = os.path.join(ld, out_name + ".lock")
+    for _ in range(2):
+        try:
+            fd = os.open(lp, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return True
+        except FileExistsError:
+            try:
+                pid = int(open(lp).read().strip() or 0)
+                os.kill(pid, 0)
+                return False  # another live process has it
+            except (ValueError, ProcessLookupError, FileNotFoundError):
+                try:
+                    os.remove(lp)
+                except FileNotFoundError:
+                    pass
+    return False
 
 
 def _write_report(output_dir: str, report: list):
@@ -232,9 +276,11 @@ def _write_report(output_dir: str, report: list):
         json.dump(sorted(report, key=lambda r: r.get("output", r.get("key", ""))), fh, indent=1, default=str)
 
 
-def _process_task(task) -> dict:
-    i, n, key, g, preset, ov, half, output_dir, web_long_edge = task
+def _process_task(task) -> dict | None:
+    i, n, key, g, preset, ov, half, output_dir, web_long_edge, resume = task
     out_name = f"{i:02d}_{key}.jpg"
+    if not _claim(output_dir, out_name, skip_existing=resume):
+        return None
     t = time.time()
     try:
         v, info = process_bracket(g, preset, ov, half=half)
@@ -249,4 +295,8 @@ def _process_task(task) -> dict:
               os.path.join(output_dir, "web", out_name), 90, exif_from=src["path"])
     info.update({"key": key, "output": out_name, "seconds": round(time.time() - t, 1)})
     log(f"[{i}/{n}] {key} -> {out_name} ({info['seconds']}s) {info['timing']}")
+    try:
+        os.remove(os.path.join(output_dir, ".locks", out_name + ".lock"))
+    except FileNotFoundError:
+        pass
     return info

@@ -72,6 +72,11 @@ def decode(path: str, meta: dict, nef_meta: dict | None = None, half: bool = Fal
         )
         cm = r.color_matrix[:, :3].astype(np.float32)
         sizes = r.sizes
+        # Clipping measured on the raw sensor sites, before demosaicing: a clipped
+        # site corrupts the colour of its neighbours during interpolation even
+        # where the interpolated values sit below the clip point.
+        cfa = r.raw_image_visible
+        cfa_clip = (cfa >= 0.98 * float(r.white_level)).astype(np.uint8)
     rgb = rgb.astype(np.float32) * (1.0 / 65535.0)
     # Per-channel clip level after WB normalisation by the max multiplier.
     clip_lvl = np.array([w / mmax for w in cam_wb], dtype=np.float32)
@@ -82,11 +87,25 @@ def decode(path: str, meta: dict, nef_meta: dict | None = None, half: bool = Fal
     # Pixels where a channel truly hit the sensor's clip point: their colour is
     # unrecoverable (glints, LEDs, the sun). Kept sharp so the merge can render
     # them white when even the darkest frame clipped, without touching real colour.
-    hard = cv2.dilate((sat >= 0.97).astype(np.uint8), np.ones((3, 3), np.uint8)).astype(np.float32)
+    hc, wc = rgb.shape[:2]
+    if half:  # each output pixel is one 2x2 CFA block
+        cc = cfa_clip[: 2 * hc, : 2 * wc].reshape(hc, 2, wc, 2).max(axis=(1, 3))
+        reach = 3
+    else:
+        cc = cfa_clip[:hc, :wc]
+        reach = 5  # DHT interpolation reaches ~2 sites out
+    if cc.shape != (hc, wc):
+        cc = cv2.resize(cc, (wc, hc), interpolation=cv2.INTER_NEAREST)
+    cc = cv2.dilate(cc, np.ones((reach, reach), np.uint8))
+    del cfa_clip
+    hard = np.maximum(cc, (sat >= 0.97).astype(np.uint8)).astype(np.float32)
     sat = cv2.dilate(sat, np.ones((5, 5), np.uint8))
     sat = cv2.GaussianBlur(sat, (0, 0), 2.0 if not half else 1.0)
     t = np.clip((sat - 0.80) / 0.16, 0, 1)
     clip = (t * t * (3 - 2 * t)).astype(np.float32)
+    # never trust this frame around clipped sensor sites (merge weights -> 0 there)
+    np.maximum(clip, cv2.GaussianBlur(hard, (0, 0), 1.5 if not half else 0.8) * 1.0, out=clip)
+    np.clip(clip, 0, 1, out=clip)
     # bring brightest-channel clip point to 1.0
     rgb *= 1.0 / max(clip_lvl)
 

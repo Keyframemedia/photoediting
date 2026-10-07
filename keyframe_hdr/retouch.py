@@ -8,6 +8,7 @@ region, composited back with a feathered mask and matched film grain.
 Edits are given per image in edits.json, coordinates normalised to the output:
   {"retouch": [{"box": [x0, y0, x1, y1], "mode": "person"},   # find people in box, remove
                {"box": [x0, y0, x1, y1], "mode": "fill"},     # remove the whole box
+               {"box": [x0, y0, x1, y1], "mode": "neutral"},  # take colour out (moire brush)
                {"poly": [[x, y], ...]}]}                        # remove a polygon
 """
 from __future__ import annotations
@@ -146,6 +147,16 @@ def apply_edits(v: np.ndarray, edits: list[dict]) -> tuple[np.ndarray, list]:
     mask = np.zeros((H, W), bool)
     log = []
     for e in edits:
+        if e.get("mode") == "neutral":
+            # moire brush: remove false colour from fine grilles/fabrics, keep detail
+            x0, y0, x1, y1 = e["box"]
+            m = np.zeros((H, W), np.float32)
+            m[int(y0 * H):int(np.ceil(y1 * H)), int(x0 * W):int(np.ceil(x1 * W))] = 1
+            m = cv2.GaussianBlur(m, (0, 0), max(1.0, 0.002 * max(H, W)))[..., None]
+            Y = (v @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32))[..., None]
+            v = v * (1 - m) + Y * m
+            log.append({"box": e["box"], "mode": "neutral"})
+            continue
         if "poly" in e:
             pts = (np.array(e["poly"], dtype=np.float32) * [W, H]).astype(np.int32)
             m = np.zeros((H, W), np.uint8)

@@ -72,14 +72,17 @@ def main():
         if r.get("aerial"):
             notes.append("Aerial")
         for e in r.get("retouch") or []:
-            notes.append("Photographer shadow removed" if "poly" in e else "Reflection cleaned")
+            label = {"neutral": "Moiré removed", "fill": "Object removed"}.get(
+                e.get("mode"), "Photographer shadow removed" if "poly" in e else "Photographer removed from reflection")
+            if label not in notes:
+                notes.append(label)
         if r.get("sky", {}).get("applied"):
             notes.append("Sky replaced")
         ex = exif_line(a.raw_dir, r["files"])
         items.append({"key": key, "n": out.split("_")[0], "after": f"after/{out}", "before": before,
                       "notes": notes, "exif": ex,
                       "w": im.size[0], "h": im.size[1]})
-    retouched = sum(1 for i in items if any("removed" in n or "cleaned" in n for n in i["notes"]))
+    retouched = sum(1 for i in items if any("removed" in n for n in i["notes"]))
     page = TEMPLATE.replace("__TITLE__", html.escape(a.title)).replace("__HEADING__", html.escape(a.heading))
     page = page.replace("__META__", html.escape(a.meta)).replace("__COUNT__", str(len(items)))
     page = page.replace("__RETOUCHED__", str(retouched))
@@ -109,6 +112,7 @@ TEMPLATE = r"""<title>__TITLE__</title>
   --paper: #111111; --sheet: #1a1a1a; --ink: #ecebe7; --muted: #9b9a95; --line: #2e2e2c;
   --ok: #8fcb9d; --ok-bg: #1d2e22; --flag: #e8b273; --flag-bg: #33261a; --focus: #ecebe7; color-scheme: dark }
 * { box-sizing: border-box }
+[hidden] { display: none !important }
 body { background: var(--paper); color: var(--ink); font: 15px/1.55 var(--body); padding: 0 clamp(16px, 4vw, 48px) 64px; }
 .wrap { max-width: 1480px; margin: 0 auto }
 header { padding-block: 40px 28px; border-bottom: 1px solid var(--line); display: grid; gap: 14px }
@@ -245,7 +249,7 @@ function paint() {
     ta.readOnly = readOnly;
     el.querySelectorAll(".btn").forEach(b => b.disabled = readOnly || !db);
     const show = filter === "all" || (filter === "todo" && !s.status) || (filter === s.status) ||
-      (filter === "retouch" && it.notes.some(n => /removed|cleaned/.test(n)));
+      (filter === "retouch" && it.notes.some(n => /removed/.test(n)));
     el.hidden = !show;
   }
   document.getElementById("cA").textContent = a; document.getElementById("cC").textContent = ch;

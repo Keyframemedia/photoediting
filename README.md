@@ -122,6 +122,16 @@ The files are a bit bigger, but they decode directly, with no Adobe/Wine convers
 
 ## Speed
 
-About 3-4 minutes per bracket at full 45 MP on one core group. Use `--jobs 2` to process two
-brackets at once (needs about 6 GB of RAM each), so a 50-scene shoot takes about 1.5 hours on 4
-cores. `--half` gives a quick quarter-size proof run.
+About 4 minutes per bracket at full 45 MP. Peak memory is about 7 GB per bracket, and about
+1.5 GB more for brackets with retouching. On a 16 GB machine, run two processes on the same
+output folder, one plain and one with `--reverse`. They share the work through lock files,
+and a 50-scene shoot takes about 1.5-2 hours. `--half` gives a quick quarter-size proof run.
+
+## Known limits
+
+- **Inpainted areas** are a little softer than their surroundings at 100%, because LaMa works
+  at 512 px. They're invisible at listing sizes. Reflections in glass hide it best.
+- **Night preset** hasn't been tuned on real twilight brackets yet.
+- **Sky replacement** works best from a curated library of clean, ungraded sky photos. Skies cut
+  from finished images carry their grade with them.
+- **Nikon HE\*** files need the Adobe DNG Converter step (Windows app under Wine).

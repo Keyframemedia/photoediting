@@ -72,8 +72,10 @@ TWILIGHT.update({
     "sky_sat": 0.0, "sky_deepen": 0.06, "clarity": 0.10, "desat_highlights": 0.45,
     "sky_wisps": 0.8,
     # interiors (pipeline.finish decides): lamps and LEDs kept warm-cream, not
-    # orange, with the dusk blue left in the windows
-    "interior": {"wb_fixed_cct": 4200, "warmth_b": 0.006, "key": 0.29},
+    # orange, with the real dusk view left in the windows (as delivered): sky seen
+    # through glass is matted too loosely at full size for a clean replacement
+    "interior": {"wb_fixed_cct": 4200, "warmth_b": 0.006, "key": 0.29,
+                 "sky_dome": None, "sky_gradient": None},
 })
 
 PRESETS = {"day": DAY, "night": NIGHT, "twilight": TWILIGHT}

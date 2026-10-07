@@ -158,7 +158,11 @@ def finish(hdr: np.ndarray, ref_meta: dict, p: dict, info: dict | None = None) -
     emit = None
     if p.get("lights"):
         from . import lights
-        emit = lights.emitter_map(hdr, sky_alpha)
+        excl = sky_alpha
+        if excl is None:  # keep sky seen through windows from reading as a lit window
+            from . import sky as skymod
+            excl = skymod.sky_probability(hdr)
+        emit = lights.emitter_map(hdr, excl)
     t1 = time.time()
     H, W = hdr.shape[:2]
     v, rinfo = render.render(hdr, p, return_info=True, inplace=True,

@@ -95,9 +95,48 @@ def sky_probability(hdr: np.ndarray, windows: bool = True, size: int = 512) -> n
     return prob
 
 
-def refine_mask(prob_small: np.ndarray, hdr: np.ndarray) -> np.ndarray:
+def colour_posterior(prob_small: np.ndarray, hdr: np.ndarray, bins: int = 24) -> np.ndarray:
+    """Second opinion on uncertain pixels from this image's own colours.
+
+    The segmentation model can be unsure about plain surfaces next to the sky (a
+    soffit, a pale render wall). Colour/brightness histograms are learned from the
+    pixels it *is* sure about - this sky versus this house - and every uncertain
+    pixel gets the Bayes posterior with the model's probability as prior."""
+    h, w = prob_small.shape
+    small = cv2.resize(hdr, (w, h), interpolation=cv2.INTER_AREA)
+    Y = np.maximum(luminance(small), 1e-7)
+    L = np.log2(Y)
+    eps = 1e-4 * float(np.median(Y)) + 1e-9
+    u = np.log2((small[..., 2] + eps) / (small[..., 1] + eps))  # blue vs green
+    v = np.log2((small[..., 0] + eps) / (small[..., 1] + eps))  # red vs green
+    lo_L, hi_L = np.percentile(L, 0.5), np.percentile(L, 99.9) + 1e-3
+    f = np.stack([np.clip((L - lo_L) / (hi_L - lo_L), 0, 0.999),
+                  np.clip((u + 1.5) / 3.0, 0, 0.999), np.clip((v + 1.5) / 3.0, 0, 0.999)], -1)
+    idx = (f * bins).astype(np.int32)
+    flat = (idx[..., 0] * bins + idx[..., 1]) * bins + idx[..., 2]
+    sky_core, fg_core = prob_small > 0.9, prob_small < 0.1
+    if sky_core.sum() < 200 or fg_core.sum() < 200:
+        return prob_small
+    def hist(sel):
+        hh = np.bincount(flat[sel], minlength=bins ** 3).astype(np.float32).reshape(bins, bins, bins)
+        from scipy.ndimage import gaussian_filter
+        hh = gaussian_filter(hh, 1.0)
+        return hh / hh.sum()
+    ps = hist(sky_core).ravel()[flat] + 1e-7
+    pf = hist(fg_core).ravel()[flat] + 1e-7
+    pr = np.clip(prob_small, 0.02, 0.98)
+    post = pr * ps / (pr * ps + (1 - pr) * pf)
+    unsure = (prob_small >= 0.1) & (prob_small <= 0.9)
+    unsure = cv2.dilate(unsure.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
+    out = np.where(unsure, post, prob_small).astype(np.float32)
+    return cv2.GaussianBlur(out, (0, 0), 0.7)
+
+
+def refine_mask(prob_small: np.ndarray, hdr: np.ndarray, colour: bool = True) -> np.ndarray:
     """Full-resolution soft sky matte."""
     H, W = hdr.shape[:2]
+    if colour:
+        prob_small = colour_posterior(prob_small, hdr)
     prob = cv2.resize(prob_small, (W, H), interpolation=cv2.INTER_LINEAR)
     Y = np.maximum(luminance(hdr), 1e-6)
     L = np.log2(Y).astype(np.float32)

@@ -44,6 +44,22 @@ def needs_conversion(meta: dict) -> bool:
     return v in (13, 14) or "high efficiency" in str(v).lower()
 
 
+def converter_available() -> bool:
+    exe = os.path.expanduser("~/.wine/drive_c/Program Files/Adobe/Adobe DNG Converter/Adobe DNG Converter.exe")
+    return os.path.exists(exe) and shutil.which("wine") is not None
+
+
+def should_convert(meta: dict, have_converter: bool) -> bool:
+    """Every camera RAW goes through Adobe DNG Converter when it is installed: the
+    DNG carries Adobe's built-in lens corrections (distortion, lateral CA,
+    vignetting) for Canon RF / Nikon Z bodies, so all brands get the same
+    treatment. DJI files are DNG already. Without the converter only files LibRaw
+    cannot read at all are attempted."""
+    if str(meta.get("FileName", "")).lower().endswith(".dng"):
+        return False
+    return have_converter or needs_conversion(meta)
+
+
 def convert_to_dng(paths: list[str], out_dir: str, jobs: int = 3) -> dict:
     """Convert RAWs with Adobe DNG Converter under Wine. Returns {src: dng}."""
     os.makedirs(out_dir, exist_ok=True)
@@ -108,7 +124,7 @@ def finish(hdr: np.ndarray, ref_meta: dict, p: dict, info: dict | None = None) -
     """Sky replacement, upright, signature grade and retouching -> sRGB float image."""
     info = info if info is not None else {"timing": {}}
     t0 = time.time()
-    if p.get("sky"):
+    if p.get("sky"):  # a sky photo (edits.json); domes are placed after upright
         from . import sky as skymod
         hdr, info["sky"] = skymod.replace_sky(hdr, None if p["sky"] is True else p["sky"],
                                               brightness=p.get("sky_brightness", 1.0))
@@ -118,9 +134,29 @@ def finish(hdr: np.ndarray, ref_meta: dict, p: dict, info: dict | None = None) -
         hdr, ginfo = geometry.upright(hdr, ref_meta, p)
     elif is_aerial and p.get("level_horizon", True):
         hdr, ginfo = geometry.level(hdr, ref_meta, p)
+    sky_alpha = None
+    if p.get("sky_dome"):
+        from . import skydome
+        hdr, sinfo = skydome.replace(hdr, p["sky_dome"], ref_meta, ginfo,
+                                     shot_index=p.get("shot_index", 0), seed=p.get("sky_seed", 0),
+                                     ref_yaw=p.get("sky_ref_yaw"), brightness=p.get("sky_brightness", 1.0))
+        sky_alpha = sinfo.pop("_alpha", None)
+        info["sky"] = sinfo
+    if p.get("sky_purple_deg") and sky_alpha is None:
+        from . import sky as skymod
+        sky_alpha = skymod.refine_mask(skymod.sky_probability(hdr), hdr)
+    emit = None
+    if p.get("lights"):
+        from . import lights
+        emit = lights.emitter_map(hdr, sky_alpha)
     t1 = time.time()
-    v, rinfo = render.render(hdr, p, return_info=True, inplace=True)
-    del hdr
+    v, rinfo = render.render(hdr, p, return_info=True, inplace=True,
+                             sky=sky_alpha if p.get("sky_purple_deg") else None)
+    del hdr, sky_alpha
+    if emit is not None:
+        v = lights.enhance(v, emit, p.get("lights_glow", 0.35), p.get("lights_pool", 0.18),
+                           p.get("lights_warmth", 0.04))
+        rinfo["lights_area"] = round(float(emit.mean()), 4)
     t2 = time.time()
     if p.get("retouch"):
         from . import retouch
@@ -144,10 +180,29 @@ def process_bracket(group: list[dict], preset: dict, overrides: dict | None = No
     return finish(hdr, ref_meta, p, info)
 
 
-def save_jpeg(v: np.ndarray, path: str, quality: int = 95, exif_from: str | None = None):
+def encode_jpeg(bgr: np.ndarray, quality: int = 95, max_bytes: int | None = None) -> tuple[bytes, dict]:
+    """JPEG-encode, stepping quality (then chroma subsampling) down only as far as
+    needed to fit `max_bytes`. Starts at q95 4:4:4."""
+    steps = [(q, "444") for q in (quality, 94, 93, 92, 91, 90)] + \
+            [(q, "420") for q in (95, 93, 91, 89, 87, 85, 82, 79, 75)]
+    steps = [st for st in steps if st[0] <= quality] or [(quality, "444")]
+    buf = None
+    for q, sub in steps:
+        flag = cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444 if sub == "444" else cv2.IMWRITE_JPEG_SAMPLING_FACTOR_420
+        ok, enc = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, q, cv2.IMWRITE_JPEG_SAMPLING_FACTOR, flag])
+        buf = enc.tobytes()
+        if max_bytes is None or len(buf) <= max_bytes:
+            return buf, {"quality": q, "subsampling": sub, "bytes": len(buf)}
+    return buf, {"quality": steps[-1][0], "subsampling": steps[-1][1], "bytes": len(buf), "over_limit": True}
+
+
+def save_jpeg(v: np.ndarray, path: str, quality: int = 95, exif_from: str | None = None,
+              max_bytes: int | None = None) -> dict:
     out = (np.clip(v, 0, 1) * 255 + 0.5).astype(np.uint8)
-    cv2.imwrite(path, out[:, :, ::-1], [cv2.IMWRITE_JPEG_QUALITY, quality,
-                                        cv2.IMWRITE_JPEG_SAMPLING_FACTOR, cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444])
+    # leave room for the EXIF block and the sRGB ICC profile added below
+    buf, enc = encode_jpeg(out[:, :, ::-1], quality, None if max_bytes is None else max_bytes - 48_000)
+    with open(path, "wb") as fh:
+        fh.write(buf)
     icc = os.path.join(os.path.dirname(__file__), "sRGB.icc")
     args = ["exiftool", "-q", "-overwrite_original"]
     if exif_from:
@@ -157,12 +212,19 @@ def save_jpeg(v: np.ndarray, path: str, quality: int = 95, exif_from: str | None
         args += [f"-ICC_Profile<={icc}"]
     if len(args) > 3:
         subprocess.run(args + [path], capture_output=True)
+    enc["bytes"] = os.path.getsize(path)
+    return enc
 
 
 def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
         only: list[str] | None = None, web_long_edge: int = 2560, work_dir: str | None = None,
-        jobs: int = 1, resume: bool = True, reverse: bool = False):
-    preset = PRESETS[style]
+        jobs: int = 1, resume: bool = True, reverse: bool = False, options: dict | None = None,
+        max_mb: float | None = None):
+    """options: preset overrides for the whole shoot (presets.job_overrides plus
+    e.g. sky_seed); max_mb: size cap for the full-resolution JPEGs."""
+    preset = dict(PRESETS[style])
+    preset.update(options or {})
+    preset["_max_bytes"] = int(max_mb * 1_000_000) if max_mb else None
     work_dir = work_dir or os.path.join(output_dir, ".work")
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.join(output_dir, "web"), exist_ok=True)
@@ -170,9 +232,10 @@ def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
     metas = raw.exif(files)
     for m in metas:
         m["path"] = os.path.join(m["Directory"], m["FileName"])
-    conv = [m["path"] for m in metas if needs_conversion(m)]
+    have_conv = converter_available()
+    conv = [m["path"] for m in metas if should_convert(m, have_conv)]
     if conv:
-        log(f"converting {len(conv)} High Efficiency NEFs to DNG")
+        log(f"converting {len(conv)} camera RAWs to DNG (Adobe DNG Converter)")
         mapping = convert_to_dng(conv, os.path.join(work_dir, "dng"))
         missing = [c for c in conv if c not in mapping]
         if missing:
@@ -193,6 +256,11 @@ def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
     metas = [m for m in metas if os.path.exists(m["decode_path"])]
     groups = merge.group_brackets(metas)
     log(f"{len(files)} files -> {len(groups)} brackets ({style})")
+    # drones carry a compass: the first drone shot sets the sky dome's reference yaw
+    yaws = [m.get("GimbalYawDegree", m.get("FlightYawDegree")) for g in groups for m in g]
+    yaws = [y for y in yaws if y is not None]
+    if yaws and "sky_ref_yaw" not in preset:
+        preset["sky_ref_yaw"] = float(yaws[0])
 
     edits_path = os.path.join(output_dir, "edits.json")
     edits = json.load(open(edits_path)) if os.path.exists(edits_path) else {}
@@ -202,7 +270,8 @@ def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,
         key = os.path.splitext(sorted(g, key=lambda m: merge._ts(m))[0]["FileName"])[0]
         if only and not any(o in n for o in only for n in names):
             continue
-        ov = edits.get(key, {})
+        ov = dict(edits.get(key, {}))
+        ov.setdefault("shot_index", i)
         if ov.get("skip"):
             continue
         if resume and os.path.exists(os.path.join(output_dir, f"{i:02d}_{key}.jpg")):
@@ -290,7 +359,8 @@ def _process_task(task) -> dict | None:
         return {"key": key, "error": repr(e), "trace": traceback.format_exc()}
     p = dict(preset, **ov)
     src = sorted(g, key=raw.relative_exposure)[len(g) // 2]
-    save_jpeg(render.output_sharpen(v, p), os.path.join(output_dir, out_name), 95, exif_from=src["path"])
+    info["jpeg"] = save_jpeg(render.output_sharpen(v, p), os.path.join(output_dir, out_name), 95,
+                             exif_from=src["path"], max_bytes=p.get("_max_bytes"))
     save_jpeg(render.output_sharpen(v, p, long_edge=web_long_edge),
               os.path.join(output_dir, "web", out_name), 90, exif_from=src["path"])
     info.update({"key": key, "output": out_name, "seconds": round(time.time() - t, 1)})

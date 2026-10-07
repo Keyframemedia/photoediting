@@ -46,6 +46,34 @@ NIGHT.update({
     "sky_sat": 0.22, "sky_deepen": 0.06, "green_sat": 0.0,
     "chroma_nr": 1.6, "luma_nr": 0.6,
     "desat_highlights": 0.45,
+    # every interior/exterior light reads as on (lights.py)
+    "lights": True, "lights_glow": 0.35, "lights_pool": 0.18, "lights_warmth": 0.04,
 })
 
 PRESETS = {"day": DAY, "night": NIGHT}
+PRESETS["twilight"] = NIGHT
+
+# Studio options -> preset overrides
+DAY_SKY = {"original": None, "clouds": "clouds", "clear": "clear"}
+TWILIGHT_SKY = {"original": None, "clear": "twilight_clear", "clouds": "twilight_clouds"}
+
+
+def job_overrides(style: str, sky: str = "original", look: str = "natural", lights: bool = True) -> dict:
+    """Overrides for one shoot, from the options chosen in the studio.
+
+    day:      sky = original | clouds | clear
+    twilight: look = natural | purple, sky = original | clear | clouds,
+              lights = enhance every interior/exterior light"""
+    ov: dict = {}
+    if style == "day":
+        ov["sky_dome"] = DAY_SKY.get(sky)
+    else:
+        dome = TWILIGHT_SKY.get(sky)
+        if look == "purple":
+            if dome == "twilight_clear":
+                dome = "twilight_purple"  # a lavender dusk dome; little extra grading needed
+            ov["sky_purple_deg"] = 8.0 if dome else 18.0
+            ov["sky_purple_sat"] = 0.08
+        ov["sky_dome"] = dome
+        ov["lights"] = bool(lights)
+    return ov

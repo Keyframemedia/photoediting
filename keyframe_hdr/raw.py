@@ -40,7 +40,9 @@ def exif(paths: list[str]) -> list[dict]:
             "-ExposureTime", "-FNumber", "-ISO", "-ExposureCompensation",
             "-FocalLength", "-FocusDistance", "-LensModel", "-Model", "-Make",
             "-Orientation", "-VignetteCoefficient1", "-VignetteCoefficient2",
-            "-VignetteCoefficient3", "-NEFCompression", "-ImageWidth", "-ImageHeight"]
+            "-VignetteCoefficient3", "-NEFCompression", "-ImageWidth", "-ImageHeight",
+            "-FocalLengthIn35mmFormat", "-GimbalPitchDegree", "-GimbalYawDegree",
+            "-GimbalRollDegree", "-FlightYawDegree"]
     out = subprocess.run(["exiftool", "-j", "-n", *tags, *paths],
                          capture_output=True, text=True, check=False).stdout
     return json.loads(out) if out.strip() else []

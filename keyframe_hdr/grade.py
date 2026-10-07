@@ -232,7 +232,7 @@ def clarity(Yd: np.ndarray, amount: float, sigma: float) -> np.ndarray:
 # Colour
 # ---------------------------------------------------------------------------
 
-def colour_grade(lab: np.ndarray, p: dict) -> np.ndarray:
+def colour_grade(lab: np.ndarray, p: dict, sky: np.ndarray | None = None) -> np.ndarray:
     L, a, b = lab[..., 0], lab[..., 1], lab[..., 2]
     C = np.hypot(a, b)
     h = np.arctan2(b, a)  # radians
@@ -261,6 +261,13 @@ def colour_grade(lab: np.ndarray, p: dict) -> np.ndarray:
     # Timber/skin oranges (~55-75 deg): protect from over-saturation
     wo = hue_w(65, 25)
     gain = 1 + (gain - 1) * (1 - p.get("orange_protect", 0.0) * wo)
+
+    # Twilight "purple" look: turn the blues of the sky (only) toward violet
+    purple = p.get("sky_purple_deg", 0.0)
+    if purple and sky is not None:
+        ws = np.clip(sky, 0, 1) * hue_w(255, 50)
+        h = h + np.float32(np.deg2rad(purple)) * ws
+        gain = gain * (1 + p.get("sky_purple_sat", 0.10) * ws)
 
     C2 = C * gain
     a2, b2 = C2 * np.cos(h), C2 * np.sin(h)

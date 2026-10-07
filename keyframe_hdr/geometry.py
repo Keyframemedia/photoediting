@@ -121,10 +121,13 @@ def upright(hdr: np.ndarray, meta: dict, p: dict) -> tuple[np.ndarray, dict]:
     Ks = _intrinsics(meta, Y.shape[1], Y.shape[0])
     d, ninl = vertical_direction(segs, Ks)
     info = {"segments": int(len(segs)), "inliers": ninl}
+    K = _intrinsics(meta, W, H)
     if d is None or ninl < p.get("upright_min_inliers", 6):
         info["applied"] = False
         return hdr, info
     R = _rotation_to_y(d)
+    # camera model of the image as returned (used to place replacement skies)
+    info["camera"] = {"f": float(K[0, 0]), "pp": [float(K[0, 2]), float(K[1, 2])], "R": R.tolist()}
     ang = math.degrees(math.acos(min(1.0, float(d[1]))))
     pitch = math.degrees(math.atan2(d[2], d[1]))
     roll = math.degrees(math.atan2(d[0], d[1]))
@@ -136,7 +139,6 @@ def upright(hdr: np.ndarray, meta: dict, p: dict) -> tuple[np.ndarray, dict]:
     if strength < 1.0:
         axis_angle = cv2.Rodrigues(R)[0] * strength
         R = cv2.Rodrigues(axis_angle)[0]
-    K = _intrinsics(meta, W, H)
     Hm = K @ R @ np.linalg.inv(K)
     corners = np.array([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]], dtype=np.float64)
     wc = cv2.perspectiveTransform(corners.reshape(-1, 1, 2), Hm).reshape(-1, 2)
@@ -149,6 +151,11 @@ def upright(hdr: np.ndarray, meta: dict, p: dict) -> tuple[np.ndarray, dict]:
     T = np.array([[1, 0, -(cx - (ow - 1) / 2)], [0, 1, -(cy - (oh - 1) / 2)], [0, 0, 1]], dtype=np.float64)
     out = cv2.warpPerspective(hdr, T @ Hm, (ow, oh), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT)
     info.update({"applied": True, "crop_scale": round(sc, 3), "size": [ow, oh]})
+    # now a level camera (or the partial correction): same focal length, centre moved by the crop
+    R_left = R if strength >= 1.0 else _rotation_to_y(d) @ np.linalg.inv(R)
+    info["camera"] = {"f": float(K[0, 0]),
+                      "pp": [float(K[0, 2] - (cx - (ow - 1) / 2)), float(K[1, 2] - (cy - (oh - 1) / 2))],
+                      "R": (np.eye(3) if strength >= 1.0 else R_left).tolist()}
     return np.maximum(out, 0), info
 
 

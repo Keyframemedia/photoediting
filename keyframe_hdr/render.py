@@ -11,9 +11,11 @@ from .merge import luminance
 STRIP = 512  # rows per strip for the pixel-wise colour stages (bounds peak memory)
 
 
-def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = False):
+def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = False,
+           sky: np.ndarray | None = None):
     """inplace=True reuses (and destroys) `hdr`'s buffer - the pipeline uses this
-    to keep peak memory down at 45 MP."""
+    to keep peak memory down at 45 MP. `sky` (optional, full-size alpha) lets the
+    grade treat the sky on its own (twilight purple look)."""
     info = {}
     Y = luminance(hdr)
     # 1. exposure: anchor the room's whites, keep the median in a sane range
@@ -106,7 +108,7 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = 
     for r0 in range(0, rgb.shape[0], STRIP):
         sl = slice(r0, r0 + STRIP)
         c = tonemap.apply_luminance(rgb[sl], Y[sl], Yd_lin[sl], desat_highlights=desat, ratio_ref=ratio_ref)
-        lab = grade.colour_grade(grade.rec2020_to_oklab(c), p)
+        lab = grade.colour_grade(grade.rec2020_to_oklab(c), p, sky=None if sky is None else sky[sl])
         c = grade.gamut_map_srgb(grade.oklab_to_rec2020(lab).astype(np.float32))
         rgb[sl] = tonemap.srgb_encode(np.clip(c, 0, 1))
     v = rgb

@@ -72,6 +72,22 @@ Every image is also scanned for people automatically. Candidates (with boxes) ar
 `report.json` under `people_candidates`, so reflections can be checked and confirmed rather
 than auto-erased. That way a person in a framed print on the wall is never wiped.
 
+## Client review gallery
+
+```bash
+python tools/make_gallery.py output/ raw/ gallery/ --thumbs previews/ --heading "Wānaka" --meta "1 Sept 2026 · …"
+```
+
+This builds a before/after contact sheet: each finished frame against the camera's own JPEG,
+with a compare slider. It's published as a private Artifact. Each image can be marked
+**Approve** or **Needs changes** with a note. The notes are stored with the page, so Claude can
+read them back, turn them into `edits.json` entries and re-run only those images.
+
+## Tests
+
+`python -m pytest tests/ -q` runs fast smoke tests on synthetic data: merge accuracy, both
+presets, in-place rendering and bracket grouping.
+
 ## Setup (Linux)
 
 ```bash

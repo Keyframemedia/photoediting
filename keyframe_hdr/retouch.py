@@ -152,9 +152,15 @@ def apply_edits(v: np.ndarray, edits: list[dict]) -> tuple[np.ndarray, list]:
             x0, y0, x1, y1 = e["box"]
             m = np.zeros((H, W), np.float32)
             m[int(y0 * H):int(np.ceil(y1 * H)), int(x0 * W):int(np.ceil(x1 * W))] = 1
-            m = cv2.GaussianBlur(m, (0, 0), max(1.0, 0.002 * max(H, W)))[..., None]
-            Y = (v @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32))[..., None]
-            v = v * (1 - m) + Y * m
+            m = cv2.GaussianBlur(m, (0, 0), max(1.0, 0.002 * max(H, W)))
+            Y = v @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+            # only the dark grille/fabric itself, never the wall around it: gate by
+            # how much darker each pixel is than the box's bright surround
+            box = Y[int(y0 * H):int(np.ceil(y1 * H)), int(x0 * W):int(np.ceil(x1 * W))]
+            ref = float(np.percentile(box, 90)) if box.size else 1.0
+            m *= np.clip((0.75 * ref - Y) / (0.35 * ref + 1e-6), 0, 1)
+            m = m[..., None]
+            v = v * (1 - m) + Y[..., None] * m
             log.append({"box": e["box"], "mode": "neutral"})
             continue
         if "poly" in e:

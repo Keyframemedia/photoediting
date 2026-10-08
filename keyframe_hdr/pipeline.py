@@ -66,7 +66,10 @@ def convert_to_dng(paths: list[str], out_dir: str, jobs: int = 3) -> dict:
     todo = [p for p in paths if not os.path.exists(_dng_name(p, out_dir))]
     if todo:
         wine_c = os.path.expanduser("~/.wine/drive_c")
-        link_in, link_out = os.path.join(wine_c, "kf_in"), os.path.join(wine_c, "kf_out")
+        # links of its own: several brackets may convert on one machine at once
+        tag = f"{os.getpid()}_{time.time_ns() % 10**9}"
+        n_in, n_out = f"kf_in_{tag}", f"kf_out_{tag}"
+        link_in, link_out = os.path.join(wine_c, n_in), os.path.join(wine_c, n_out)
         for link, target in ((link_in, os.path.dirname(os.path.abspath(todo[0]))), (link_out, os.path.abspath(out_dir))):
             if os.path.islink(link) or os.path.exists(link):
                 os.remove(link)
@@ -77,11 +80,16 @@ def convert_to_dng(paths: list[str], out_dir: str, jobs: int = 3) -> dict:
         for i, ch in enumerate(chunks):
             if not ch:
                 continue
-            args = ["xvfb-run", "-a", "-n", str(80 + i), "wine", DNG_CONVERTER, "-c", "-p0",
-                    "-d", r"C:\kf_out"] + [r"C:\kf_in" + "\\" + os.path.basename(p) for p in ch]
+            args = ["xvfb-run", "-a", "wine", DNG_CONVERTER, "-c", "-p0",
+                    "-d", "C:\\" + n_out] + ["C:\\" + n_in + "\\" + os.path.basename(p) for p in ch]
             procs.append(subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env))
         for p in procs:
             p.wait()
+        for link in (link_in, link_out):
+            try:
+                os.remove(link)
+            except OSError:
+                pass
     return {p: _dng_name(p, out_dir) for p in paths if os.path.exists(_dng_name(p, out_dir))}
 
 
@@ -124,27 +132,29 @@ def finish(hdr: np.ndarray, ref_meta: dict, p: dict, info: dict | None = None) -
     """Sky replacement, upright, signature grade and retouching -> sRGB float image."""
     info = info if info is not None else {"timing": {}}
     t0 = time.time()
-    if p.get("sky"):  # a sky photo (edits.json); domes are placed after upright
-        from . import sky as skymod
-        hdr, info["sky"] = skymod.replace_sky(hdr, None if p["sky"] is True else p["sky"],
-                                              brightness=p.get("sky_brightness", 1.0))
     is_aerial = str(ref_meta.get("Make", "")).upper().startswith("DJI")
     if is_aerial and p.get("aerial"):
         p = {**p, **p["aerial"]}  # drone shots: their own tone (see presets)
-    ginfo = {}
-    if p.get("upright", True) and not is_aerial:
-        hdr, ginfo = geometry.upright(hdr, ref_meta, p)
-    elif is_aerial and p.get("level_horizon", True):
-        hdr, ginfo = geometry.level(hdr, ref_meta, p)
     if p.get("interior") and not is_aerial:
-        # interiors get their own settings (twilight: tungsten-warm, not orange). An
-        # interior shows almost no sky outside windows; ADE20K calls sky seen
-        # through glass "windowpane", so the plain pass separates the two cleanly.
+        # interiors get their own settings (twilight: tungsten-warm, not orange, and
+        # the real view kept in the windows). An interior shows almost no sky
+        # outside windows; ADE20K calls sky seen through glass "windowpane", so the
+        # plain pass separates the two cleanly.
         from . import sky as skymod
         ext = float((skymod.sky_probability(hdr, windows=False) > 0.5).mean())
         info["scene"] = "exterior" if ext > p.get("exterior_min_sky", 0.05) else "interior"
         if info["scene"] == "interior":
             p = {**p, **p["interior"]}
+    if p.get("sky"):  # a sky photo (library or edits.json); domes are placed after upright
+        from . import sky as skymod
+        hdr, info["sky"] = skymod.replace_sky(hdr, None if p["sky"] is True else p["sky"],
+                                              brightness=p.get("sky_brightness", 1.0),
+                                              offset=p.get("sky_offset"))
+    ginfo = {}
+    if p.get("upright", True) and not is_aerial:
+        hdr, ginfo = geometry.upright(hdr, ref_meta, p)
+    elif is_aerial and p.get("level_horizon", True):
+        hdr, ginfo = geometry.level(hdr, ref_meta, p)
     sky_alpha = None
     if p.get("sky_dome"):
         from . import skydome
@@ -182,10 +192,28 @@ def finish(hdr: np.ndarray, ref_meta: dict, p: dict, info: dict | None = None) -
                            p.get("lights_warmth", 0.04))
         rinfo["lights_area"] = round(float(emit.mean()), 4)
     t2 = time.time()
-    if p.get("retouch"):
+    edits = list(p.get("retouch") or [])
+    if p.get("auto_people") or p.get("tv_black") or p.get("green_lawn"):
+        from . import scene
+        probs = scene.segment(v)
+        if p.get("tv_black"):
+            v, info["screens_blacked"] = scene.black_screens(v, probs)
+        if p.get("green_lawn"):
+            v, info["lawn"] = scene.green_lawn(v, probs)
+        if p.get("auto_people"):
+            flags = scene.classify_people(v, probs, keep=p.get("keep_boxes"), aerial=is_aerial)
+            info["people"] = flags
+            for f in flags:
+                if f["action"] == "remove":
+                    x0, y0, x1, y1 = f["box"]
+                    gx, gy = 0.15 * (x1 - x0), 0.1 * (y1 - y0)
+                    edits.append({"box": [max(0, x0 - gx), max(0, y0 - gy), min(1, x1 + gx), min(1, y1 + gy)],
+                                  "mode": "person"})
+        del probs
+    if edits:
         from . import retouch
-        v, info["retouch"] = retouch.apply_edits(v, p["retouch"])
-    if p.get("detect_people", True):
+        v, info["retouch"] = retouch.apply_edits(v, edits)
+    if p.get("detect_people", True) and not p.get("auto_people"):
         from . import retouch
         cands = retouch.detect_people(v, min_score=p.get("people_min_score", 0.3))
         info["people_candidates"] = [{"score": c["score"], "box": [round(x, 4) for x in c["box"]]}
@@ -238,6 +266,34 @@ def save_jpeg(v: np.ndarray, path: str, quality: int = 95, exif_from: str | None
         subprocess.run(args + [path], capture_output=True)
     enc["bytes"] = os.path.getsize(path)
     return enc
+
+
+def prepare_group(metas: list[dict], dng_dir: str) -> list[dict]:
+    """Make one bracket's frames decodable: Nikon HE / Canon files go through the
+    Adobe DNG Converter (decode_path -> the DNG, the original's tags kept as
+    nef_meta); everything else decodes as is. Frames that can't be prepared drop
+    out. metas need "path"."""
+    have_conv = converter_available()
+    conv = [m["path"] for m in metas if should_convert(m, have_conv)]
+    mapping = convert_to_dng(conv, dng_dir) if conv else {}
+    if mapping:
+        dmeta = {os.path.basename(d): x for d, x in zip(mapping.values(), raw.exif(list(mapping.values())))}
+    out = []
+    for m in metas:
+        if m["path"] in mapping:
+            d = mapping[m["path"]]
+            m["nef_meta"] = dict(m)
+            m["decode_path"] = d
+            for k in ("ImageWidth", "ImageHeight"):
+                if k in dmeta.get(os.path.basename(d), {}):
+                    m[k] = dmeta[os.path.basename(d)][k]
+        elif m["path"] in conv and needs_conversion(m):
+            continue  # converter failed and LibRaw can't read it
+        else:
+            m["decode_path"] = m["path"]
+        if os.path.exists(m["decode_path"]):
+            out.append(m)
+    return out
 
 
 def run(input_dir: str, output_dir: str, style: str = "day", half: bool = False,

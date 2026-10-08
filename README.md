@@ -25,38 +25,60 @@ output/
 
 ## Photo edits in the Keyframe portal (the everyday way)
 
-Shoots are sent for editing from the portal: **book.keyframemedia.co.nz → Admin → Deliveries →
-Photo edits**. It needs Deliveries access.
+Shoots are edited from the portal: **book.keyframemedia.co.nz → Admin → Deliveries → Photo
+edits**, by anyone with Deliveries access. No AI service is involved: the editing runs on the
+Keyframe editing farm.
 
 1. Press **New shoot** and fill in:
-   - the property;
-   - the Dropbox folder link of the bracketed RAWs (Canon, Nikon or DJI);
-   - **Daytime** or **Twilight**, and the options:
-     - **Daytime** sky: original, blue with clouds, or clear blue;
-     - **Twilight**: natural or purple dusk, the lights enhancement on or off, and the sky
-       (original, clear dusk or dusk with clouds).
-2. The portal's `photo-edit-start` function fires the **Keyframe editing worker** Routine.
-   - That's a fresh Claude Code cloud session per shoot, so several shoots edit at once.
-   - It follows [`worker/WORKER.md`](worker/WORKER.md):
-     - installs the tools (`scripts/setup_worker.sh`) and downloads the RAWs;
-     - edits two brackets at a time;
-     - checks every frame for people and photographers in reflections and removes them.
-   - `worker/run_job.py` reports to the portal's `photo-edit-worker` function with a one-time
-     token per job:
-     - stage, progress and ETA every few minutes;
-     - a check for the Stop button;
-     - uploads of the finished JPEGs and previews to the private `photo-edits` bucket.
-3. The shoot moves along **Uploaded → Editing → Edit complete**. Filters hide old jobs, and
-   **Archive** tidies finished ones.
-4. **Download all** saves every full-resolution JPEG (each under 10 MB) as one folder (.zip).
+   - the property and the Dropbox folder link of the bracketed RAWs (Canon, Nikon or DJI);
+   - **Daytime** or **Twilight** (natural or purple);
+   - the sky: original, blue with clouds or clear blue (twilight: glow or with clouds), or
+     **Our skies**, one from the Skies tab (one picked per shoot, or a chosen one);
+   - edits: remove people from reflections (on by default), black TV screens, green the lawn,
+     strong window pull, enhance all lights (twilight);
+   - notes for whoever checks the shoot.
+2. `photo-edit-start` posts the job to the farm (`worker/modal_app.py` on Modal). The farm:
+   - lists the RAWs through the portal's Dropbox connection, reads the start of each file and
+     groups the brackets (about 20 seconds);
+   - edits **every bracket at once**, one 8-core machine each (`worker/farm.py`), so a shoot
+     takes about as long as its slowest photo: 10-20 minutes;
+   - removes people it finds on glass, mirrors and dark TV screens, and flags anyone it isn't
+     sure of (`keyframe_hdr/scene.py`);
+   - uploads each JPEG (under 10 MB) and a preview to the portal, and writes the JPEG to an
+     **Edited** folder next to the RAWs in Dropbox.
+3. The shoot moves along **Uploaded → Editing → Edit complete**, with live progress and an ETA,
+   and **Stop** cancels the photos still being edited.
+4. **Check**: photos with someone flagged show on the shoot. Put back an automatic removal,
+   remove or keep a flagged person, or draw a box over anything missed, then **Re-edit** just
+   those photos.
+5. **Download all** saves the finished folder (.zip).
 
-A 50-scene shoot takes about 2 hours, plus 10-15 minutes of setup.
+The farm talks to the portal only through `photo-edit-worker`, with a fresh token per run, so
+it needs no keys of its own. Nothing runs, or is billed, between shoots.
+
+### Setting up the farm (once)
+
+1. Create a Modal account at modal.com (sign in with GitHub; the free plan runs 100 photos at
+   once) and make an API token: Modal → Settings → API tokens.
+2. Add it to this GitHub repository as two Actions secrets: `MODAL_TOKEN_ID` and
+   `MODAL_TOKEN_SECRET`.
+3. Run **Actions → Deploy editing farm** (or push). The first build takes about 20 minutes:
+   Python, the models, the Adobe DNG Converter and the sky domes are baked into the image.
+   Later deploys take a minute.
+4. Paste the start address it prints (`https://<workspace>--keyframe-farm-start.modal.run`)
+   into **Photo edits → Settings**.
+
+Every push that changes the pipeline redeploys the farm, so the look in the portal is always
+the look in this repository.
 
 Portal side (repo `Keyframemedia/NEW-keyframe-portal`):
-- `src/components/admin/PhotoEdits.tsx`;
-- migrations `20261016000001_photo_edits.sql` and `…02_photo_edits_worker_token.sql`;
-- edge functions `photo-edit-start` and `photo-edit-worker`;
-- the one secret: `CLAUDE_ROUTINE_TOKEN`, the routine's API trigger token.
+- `src/components/admin/PhotoEdits.tsx` and `src/components/admin/photo-edits/`;
+- migrations `20261016000001_photo_edits.sql`, `…02_photo_edits_worker_token.sql` and
+  `20261017000001_photo_edits_farm.sql`;
+- edge functions `photo-edit-start` and `photo-edit-worker`.
+
+Test a job on any Linux machine with the pipeline installed:
+`python3 worker/farm.py --job <id> --token <token> --workers 2`.
 
 ## Working with Claude directly
 

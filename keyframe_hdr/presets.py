@@ -81,10 +81,14 @@ TWILIGHT.update({
     # orange, with the real dusk view left in the windows (as delivered): sky seen
     # through glass is matted too loosely at full size for a clean replacement
     "interior": {"wb_fixed_cct": 4200, "warmth_b": 0.006, "key": 0.29,
-                 "sky_dome": None, "sky_gradient": None},
+                 "sky_dome": None, "sky_gradient": None, "sky": None},
 })
 
 PRESETS = {"day": DAY, "night": NIGHT, "twilight": TWILIGHT}
+
+# "Strong window pull": views through windows held darker and crisper, for rooms
+# where the view sells the property.
+STRONG_WINDOW_PULL = {"sky_global_white": 0.48, "sky_global_hi": 2.2, "view_clarity": 0.6}
 
 # Studio options -> preset overrides
 DAY_SKY = {"original": None, "clouds": "clouds", "clear": "clear"}

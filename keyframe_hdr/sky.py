@@ -199,9 +199,11 @@ def procedural_sky(W: int, H: int, horizon: float, kind: str = "clear") -> np.nd
 
 def replace_sky(hdr: np.ndarray, sky: str | np.ndarray | None = None, strength: float = 1.0,
                 brightness: float = 1.0, prob: np.ndarray | None = None,
-                chroma: float = 0.5) -> tuple[np.ndarray, dict]:
+                chroma: float = 0.5, offset: float | None = None) -> tuple[np.ndarray, dict]:
     """Replace the sky in a linear HDR image. `sky` is a path to an image, an sRGB
-    float array, or None / "clear" / "dusk" for a procedural sky."""
+    float array, or None / "clear" / "dusk" for a procedural sky. `offset` (0..1)
+    pans across a sky photo, so each photo of a shoot sees a different part of the
+    same sky instead of the same clouds in every frame."""
     H, W = hdr.shape[:2]
     if prob is None:
         prob = sky_probability(hdr)
@@ -220,9 +222,10 @@ def replace_sky(hdr: np.ndarray, sky: str | np.ndarray | None = None, strength: 
         img = img.astype(np.float32) / (255.0 if img.dtype == np.uint8 else 65535.0 if img.dtype == np.uint16 else 1.0)
         sh, sw = img.shape[:2]
         need_h = int(horizon * H * 1.08) + 1
-        sc = max(W / sw, need_h / sh)
+        sc = max(W * (1.0 if offset is None else 1.4) / sw, need_h / sh)
         img = cv2.resize(img, (int(np.ceil(sw * sc)), int(np.ceil(sh * sc))), interpolation=cv2.INTER_CUBIC)
-        x0 = (img.shape[1] - W) // 2
+        spare = img.shape[1] - W
+        x0 = spare // 2 if offset is None else int(np.clip(offset, 0, 1) * spare)
         y0 = max(0, img.shape[0] - need_h)  # anchor the sky's bottom just below the horizon
         crop = img[y0:y0 + H, x0:x0 + W]
         src = np.zeros((H, W, 3), np.float32)

@@ -113,7 +113,7 @@ def classify_people(v: np.ndarray, probs: np.ndarray, keep: list | None = None,
         # how dark the object around the person is: a switched-off TV is near
         # black, a painting, print or book cover of a person is lit and coloured
         x0, y0, x1, y1 = box
-        pad = 0.5
+        pad = 0.15  # just around the figure: a small TV is barely bigger than it
         ring = Y[int(max(0, y0 - pad * (y1 - y0)) * H):int(min(1, y1 + pad * (y1 - y0)) * H),
                  int(max(0, x0 - pad * (x1 - x0)) * W):int(min(1, x1 + pad * (x1 - x0)) * W)]
         dark = bool(ring.size) and float(np.median(ring)) < 0.18

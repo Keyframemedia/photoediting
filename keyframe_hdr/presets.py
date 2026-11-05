@@ -21,6 +21,12 @@ DAY = {
     # every window (and match the delivered set less well).
     "sky_global": 1.0, "sky_global_lo": 1.0, "sky_global_hi": 2.4,
     "sky_global_pct": 50.0, "sky_global_white": 0.60, "sky_global_shoulder": 4.0,
+    # decide view-or-room on texture-smoothed brightness, so foliage at the switch
+    # point isn't speckled between the two renderings (render.py)
+    "sky_global_smooth": 0.004, "sky_global_eps": 0.5,
+    # interiors (pipeline.finish): a view of hills and trees, not sky, is lifted less,
+    # so it keeps its colour and snow or haze doesn't blow out; skies are untouched
+    "interior": {"sky_global_white_hi": 0.9, "sky_global_max_darken": 0.75},
     # levels + tone: bright and open, gentle contrast
     "levels": True, "black_pct": 0.05, "white_pct": 99.5, "white_target": 0.99,
     "max_white_stretch": 1.3,
@@ -63,6 +69,8 @@ NIGHT.update({
     "sky_global": 0.9, "sky_global_hi": 2.4, "sky_global_white": 0.6, "white_target": 0.96,
     "max_white_stretch": 1.12, "pivot": 0.42, "shoulder": 0.06, "lut": None, "view_clarity": 0.0,
     "aerial": None,
+    # the twilight look was fitted without the day's view settings
+    "sky_global_smooth": 0.0, "interior": None,
 })
 
 # Twilight: Keyframe's delivered dusk look, fitted on Water Lily (dusk) the same way

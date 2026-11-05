@@ -73,7 +73,23 @@ def test_strip_cleaning_matches_whole_image():
     img[:, 200:203] = 3.0  # extreme-contrast edge
     whole = denoise.defringe(denoise.luma_nr(denoise.chroma_nr(img.copy(), 1.0, r=4), 0.35, r=1), 1.0)
     rc, rl = 4, 1
-    halo = 2 * rc + 2 * rl + 4
+    halo = 2 * rc + 2 * rl + 4 + int(3 * denoise._fringe_sigma(img.shape)) + 1  # as clean() sizes it
     fn = lambda b: denoise.defringe(denoise.luma_nr(denoise.chroma_nr(b, 1.0, r=rc), 0.35, r=rl), 1.0)
     strips = denoise.in_strips(fn, img.copy(), halo, rows=700)
     assert np.abs(whole - strips).max() < 1e-4
+
+
+def test_defringe_keeps_purple_objects():
+    """A thin purple fringe beside a bright window goes; a purple-leaved tree in
+    front of a bright view keeps its colour (it used to turn grey and speckled)."""
+    from keyframe_hdr import denoise
+    img = np.full((200, 200, 3), 0.05, np.float32)
+    img[:, 100:] = 3.0
+    img[:, 97:100] = [0.6, 0.2, 0.6]
+    img[20:80, 20:90] = [0.25, 0.05, 0.25]
+    img[20:80, 20:90:3] = 2.0
+    out = denoise.defringe(img.copy(), 1.0, sigma=8.3)  # the blur a 45 MP frame gets
+    purple = lambda a: float((np.minimum(a[..., 0], a[..., 2]) - a[..., 1]).mean())
+    assert purple(out[:, 97:100]) < 0.05 * purple(img[:, 97:100])
+    assert purple(out[20:80, 21:90:3]) > 0.8 * purple(img[20:80, 21:90:3])
+

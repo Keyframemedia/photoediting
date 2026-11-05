@@ -49,7 +49,7 @@ def clean(rgb: np.ndarray, chroma: float = 1.0, luma: float = 0.35, fringe: floa
     """Chroma NR, luma NR and defringe, strip by strip and in place."""
     rc = _radius_chroma(rgb.shape, chroma) if chroma > 0 else 0
     rl = _radius_luma(rgb.shape) if luma > 0 else 0
-    halo = 2 * rc + 2 * rl + 4
+    halo = 2 * rc + 2 * rl + 4 + (int(3 * _fringe_sigma(rgb.shape)) + 1 if fringe > 0 else 0)
 
     def fn(block):
         if chroma > 0:
@@ -57,7 +57,7 @@ def clean(rgb: np.ndarray, chroma: float = 1.0, luma: float = 0.35, fringe: floa
         if luma > 0:
             block = luma_nr(block, luma, r=rl)
         if fringe > 0:
-            block = defringe(block, fringe)
+            block = defringe(block, fringe, sigma=_fringe_sigma(rgb.shape))
         return block
 
     return in_strips(fn, rgb, halo)
@@ -106,11 +106,19 @@ def luma_nr(rgb: np.ndarray, amount: float = 0.5, r: int | None = None) -> np.nd
     return rgb * (np.exp2(L2 - L))[..., None]
 
 
-def defringe(rgb: np.ndarray, amount: float = 1.0) -> np.ndarray:
+def _fringe_sigma(shape) -> float:
+    return max(3.0, 8.0 * max(shape[:2]) / 8000)
+
+
+def defringe(rgb: np.ndarray, amount: float = 1.0, sigma: float | None = None) -> np.ndarray:
     """Suppress purple/blue-green fringes on high-contrast edges (longitudinal CA)
-    by pulling chroma toward the neighbourhood's on edge pixels with fringe hues."""
+    by pulling chroma toward the neighbourhood's on edge pixels with fringe hues.
+    A fringe is a thin purple band beside things that aren't purple: where the
+    surroundings are purple too (a copper beech, plum leaves or a purple cushion
+    against a bright window) it is the object's colour and is kept."""
     if amount <= 0:
         return rgb
+    sigma = sigma or _fringe_sigma(rgb.shape)
     Y = np.maximum(rgb @ np.array([0.2627, 0.6780, 0.0593], dtype=np.float32), 1e-6)
     L = np.log2(Y)
     gx = cv2.Sobel(L, cv2.CV_32F, 1, 0, ksize=3)
@@ -120,7 +128,8 @@ def defringe(rgb: np.ndarray, amount: float = 1.0) -> np.ndarray:
     r, g, b = rgb[..., 0] / Y, rgb[..., 1] / Y, rgb[..., 2] / Y
     # purple/magenta: r and b high vs g; cyan/blue fringe: b high vs r
     purple = np.clip((np.minimum(r, b) - g) / 0.15, 0, 1)
+    around = cv2.GaussianBlur(purple, (0, 0), sigma)
     out = rgb.copy()
-    m = (edge * purple * amount)[..., None]
+    m = (edge * purple * (1 - np.clip((around - 0.25) / 0.25, 0, 1)) * amount)[..., None]
     out = out * (1 - m) + Y[..., None] * m
     return out

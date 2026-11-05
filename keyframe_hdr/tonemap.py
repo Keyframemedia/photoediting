@@ -81,6 +81,23 @@ def auto_exposure(Y: np.ndarray, key: float = 0.18, pct: float = 50.0,
     return key / max(med, 1e-6)
 
 
+def guided_smooth(x: np.ndarray, radius: float, eps: float, sub: int = 4) -> np.ndarray:
+    """Edge-preserving smoothing of x guided by itself (fast guided filter, He et
+    al.): texture whose local variance is below eps is flattened, strong edges
+    (a window frame against a bright view) stay sharp. Worked at 1/sub size."""
+    H, W = x.shape
+    small = cv2.resize(x, (max(1, W // sub), max(1, H // sub)), interpolation=cv2.INTER_AREA)
+    r = max(1, int(round(radius / sub)))
+    box = lambda a: cv2.boxFilter(a, cv2.CV_32F, (2 * r + 1, 2 * r + 1))
+    m = box(small)
+    var = box(small * small) - m * m
+    a = var / (var + np.float32(eps))
+    b = m - a * m
+    a = cv2.resize(box(a), (W, H), interpolation=cv2.INTER_LINEAR)
+    b = cv2.resize(box(b), (W, H), interpolation=cv2.INTER_LINEAR)
+    return ne.evaluate("a * x + b").astype(np.float32)
+
+
 def _smoothstep(e0, e1, x):
     e0, e1 = np.float32(e0), np.float32(e1)
     return ne.evaluate("where(x <= e0, 0, where(x >= e1, 1, ((x - e0) / (e1 - e0)) ** 2 * (3 - 2 * (x - e0) / (e1 - e0))))")

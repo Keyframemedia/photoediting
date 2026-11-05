@@ -140,10 +140,40 @@ def download(url: str, path: str, head: int | None = None, tries: int = 5) -> in
                     n += len(chunk)
             os.replace(path + ".part", path)
             return n
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code in (400, 401, 403, 404, 409, 410):
+                break  # an expired or bad link: retrying won't help (see fresh_links)
+            time.sleep(min(20, 2 ** attempt))
         except Exception as e:
             last = e
             time.sleep(min(20, 2 ** attempt))
     raise RuntimeError(f"download failed for {os.path.basename(path)}: {last}")
+
+
+_fresh: dict[str, str] = {}
+_fresh_lock = threading.Lock()
+
+
+def fresh_links(portal: "Portal", stale: str) -> dict[str, str]:
+    """New download links for the job's files, by name. Dropbox's links last 4 hours,
+    which a long run on one machine can outlast; fetched once per expiry."""
+    with _fresh_lock:
+        if not _fresh or stale in _fresh.values():
+            _fresh.clear()
+            _fresh.update({f["name"]: f["url"] for f in portal.call("source_files").get("files", [])})
+        return dict(_fresh)
+
+
+def download_file(portal: "Portal", f: dict, path: str) -> int:
+    try:
+        return download(f["url"], path)
+    except RuntimeError:
+        url = fresh_links(portal, f["url"]).get(f["name"])
+        if not url or url == f["url"]:
+            raise
+        f["url"] = url
+        return download(url, path)
 
 
 def upload_put(url: str, path: str, content_type: str = "image/jpeg", method: str = "PUT", tries: int = 5):
@@ -215,7 +245,7 @@ def edit_bracket(spec: dict) -> dict:
         rawdir = os.path.join(work, "raw")
         os.makedirs(rawdir)
         with ThreadPoolExecutor(4) as ex:
-            list(ex.map(lambda f: download(f["url"], os.path.join(rawdir, f["name"])), spec["files"]))
+            list(ex.map(lambda f: download_file(portal, f, os.path.join(rawdir, f["name"])), spec["files"]))
         t_dl = time.time() - t0
         paths = [os.path.join(rawdir, f["name"]) for f in spec["files"]]
         metas = raw.exif(paths)

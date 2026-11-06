@@ -12,13 +12,17 @@ DAY = {
     "wb_target_cct": 5600, "wb_strength": 0.75, "wb_tint": 0.0, "wb_max_mired": 45,
     "wb_max_warm_mired": 12,
     # local tone mapping: hat-weighted fusion of virtual exposures
-    "fusion_mode": "hat", "fusion_evs": [-6.0, -4.5, -3.0, -1.5, 0.0, 1.0],
-    "fusion_hat": [0.0, 0.06, 0.96, 1.0], "fusion_ev_prior": 0.7,
+    # Renderings 3/4 stop apart: at 1.5 stops, a smooth sunlit wall whose
+    # brightness crosses a rendering's cut-off dropped to one 1.5 stops darker in a
+    # soft grey ring or blob (42 Springbank Grove); closer steps and a slightly
+    # softer cut-off leave walls and ceilings even, with the same overall look.
+    "fusion_mode": "hat", "fusion_evs": [-6.0, -5.25, -4.5, -3.75, -3.0, -2.25, -1.5, -0.75, 0.0, 0.5, 1.0],
+    "fusion_hat": [0.0, 0.06, 0.90, 1.0], "fusion_ev_prior": 0.7,
     "fusion_sigma": 0.22,
     # skies/views: one global exposure for natural clouds and a clean window view.
-    # A narrow transition (hi 2.4) and near-white kept in the fusion (hat .96) leave
-    # ceilings beside windows evenly bright; wider settings put a grey halo around
-    # every window (and match the delivered set less well).
+    # A narrow transition (hi 2.4) and near-white kept in the fusion (hat cut-off
+    # from .90, finely stepped) leave ceilings beside windows evenly bright; wider
+    # settings put a grey halo around every window (and match the delivered set less well).
     "sky_global": 1.0, "sky_global_lo": 1.0, "sky_global_hi": 2.4,
     "sky_global_pct": 50.0, "sky_global_white": 0.60, "sky_global_shoulder": 4.0,
     # levels + tone: bright and open, gentle contrast

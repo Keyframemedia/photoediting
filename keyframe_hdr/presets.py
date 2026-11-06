@@ -25,6 +25,9 @@ DAY = {
     # settings put a grey halo around every window (and match the delivered set less well).
     "sky_global": 1.0, "sky_global_lo": 1.0, "sky_global_hi": 2.4,
     "sky_global_pct": 50.0, "sky_global_white": 0.60, "sky_global_shoulder": 4.0,
+    # interiors (pipeline.finish): the view rendering only on windows and sky; by
+    # brightness alone a lamp- or sun-lit white wall turned grey (42 Springbank Grove)
+    "interior": {"view_mask": True},
     # levels + tone: bright and open, gentle contrast
     "levels": True, "black_pct": 0.05, "white_pct": 99.5, "white_target": 0.99,
     "max_white_stretch": 1.3,
@@ -67,6 +70,7 @@ NIGHT.update({
     "sky_global": 0.9, "sky_global_hi": 2.4, "sky_global_white": 0.6, "white_target": 0.96,
     "max_white_stretch": 1.12, "pivot": 0.42, "shoulder": 0.06, "lut": None, "view_clarity": 0.0,
     "aerial": None,
+    "interior": None,  # twilight sets its own; night was fitted without one
 })
 
 # Twilight: Keyframe's delivered dusk look, fitted on Water Lily (dusk) the same way

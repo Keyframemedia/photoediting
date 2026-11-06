@@ -175,10 +175,15 @@ def finish(hdr: np.ndarray, ref_meta: dict, p: dict, info: dict | None = None) -
             from . import sky as skymod
             excl = skymod.sky_probability(hdr)
         emit = lights.emitter_map(hdr, excl)
+    views = None
+    if p.get("view_mask") and not is_aerial:
+        from . import sky as skymod
+        views = skymod.view_probability(hdr)
     t1 = time.time()
     H, W = hdr.shape[:2]
     v, rinfo = render.render(hdr, p, return_info=True, inplace=True,
-                             sky=sky_alpha if p.get("sky_purple_deg") else None)
+                             sky=sky_alpha if p.get("sky_purple_deg") else None, views=views)
+    del views
     del hdr
     if p.get("sky_gradient") and sky_alpha is not None and info.get("sky", {}).get("applied"):
         from . import skydome

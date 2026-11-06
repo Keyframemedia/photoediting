@@ -52,6 +52,21 @@ def _segment(img: np.ndarray) -> np.ndarray:
     return torch.softmax(logits, dim=0).numpy().astype(np.float32)
 
 
+def view_probability(hdr: np.ndarray, size: int = 512, grow: float = 0.015) -> np.ndarray:
+    """Where the views are (sky and windows), at preview resolution:
+    a soft mask grown a little past each frame. Interiors use it to keep the
+    view rendering (render.py, sky_global) on views: by brightness alone, a white
+    wall lit by a lamp or the sun reads as a view and turns grey."""
+    probs = _segment(_preview(hdr, size))
+    # windowpane, not door: a painted door is a white surface beside the bed, and
+    # glass sliders read as windowpane where the view shows through them
+    m = (probs[SKY_CLASS] + probs[WINDOW_CLASSES[0]]) > 0.3
+    h, w = m.shape
+    r = max(1, int(round(grow * max(h, w))))
+    m = cv2.dilate(m.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1)))
+    return cv2.GaussianBlur(m.astype(np.float32), (0, 0), r)
+
+
 def sky_probability(hdr: np.ndarray, windows: bool = True, size: int = 512) -> np.ndarray:
     """Per-pixel sky probability at preview resolution.
 

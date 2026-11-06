@@ -12,10 +12,11 @@ STRIP = 512  # rows per strip for the pixel-wise colour stages (bounds peak memo
 
 
 def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = False,
-           sky: np.ndarray | None = None):
+           sky: np.ndarray | None = None, views: np.ndarray | None = None):
     """inplace=True reuses (and destroys) `hdr`'s buffer - the pipeline uses this
     to keep peak memory down at 45 MP. `sky` (optional, full-size alpha) lets the
-    grade treat the sky on its own (twilight purple look)."""
+    grade treat the sky on its own (twilight purple look). `views` (optional, any
+    size, sky.view_probability) limits the sky/view rendering to windows and sky."""
     info = {}
     Y = luminance(hdr)
     # 1. exposure: anchor the room's whites, keep the median in a sane range
@@ -66,6 +67,8 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = 
         lY = np.log2(np.maximum(Y, 1e-7))
         lk = np.log2(tonemap_key(Y, p))
         bright = tonemap._smoothstep(lk + p.get("sky_global_lo", 1.2), lk + p.get("sky_global_hi", 2.6), lY)
+        if views is not None:
+            bright *= cv2.resize(views, (bright.shape[1], bright.shape[0]), interpolation=cv2.INTER_LINEAR)
         sel = bright[:: max(1, Y.shape[0] // 500), :: max(1, Y.shape[1] // 500)] > 0.5
         ysm = Y[:: max(1, Y.shape[0] // 500), :: max(1, Y.shape[1] // 500)]
         if sel.sum() > 200:

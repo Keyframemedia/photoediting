@@ -65,34 +65,19 @@ def render(hdr: np.ndarray, p: dict, return_info: bool = False, inplace: bool = 
     if p.get("sky_global", 0) > 0:
         lY = np.log2(np.maximum(Y, 1e-7))
         lk = np.log2(tonemap_key(Y, p))
-        if p.get("sky_global_smooth", 0) > 0:
-            # decide "view or room" on edge-preserved, texture-smoothed brightness:
-            # per pixel, foliage straddling the threshold flips between the two
-            # renderings and turns speckled; window frames stay sharp
-            lY = tonemap.guided_smooth(lY, p["sky_global_smooth"] * max(Y.shape), p.get("sky_global_eps", 0.5))
         bright = tonemap._smoothstep(lk + p.get("sky_global_lo", 1.2), lk + p.get("sky_global_hi", 2.6), lY)
-        del lY
         sel = bright[:: max(1, Y.shape[0] // 500), :: max(1, Y.shape[1] // 500)] > 0.5
         ysm = Y[:: max(1, Y.shape[0] // 500), :: max(1, Y.shape[1] // 500)]
         if sel.sum() > 200:
             # anchor the sky's median (not its brightest point - that is the sun)
             ref = float(np.percentile(ysm[sel], p.get("sky_global_pct", 50.0)))
-            gain = p.get("sky_global_white", 0.60) / max(ref, 1e-7)
-            if p.get("sky_global_white_hi"):
-                # a view of hills and trees (not mostly sky) is darker than sky at
-                # its median; anchoring that median would wash the view out and blow
-                # snow and haze to white. Keep its bright end below white instead.
-                hi = float(np.percentile(ysm[sel], 95.0))
-                floor = gain * 2.0 ** -p.get("sky_global_max_darken", 0.75)
-                gain = max(floor, min(gain, p["sky_global_white_hi"] / max(hi, 1e-7)))
-            x = Y * gain
+            x = Y * (p.get("sky_global_white", 0.60) / max(ref, 1e-7))
             n = p.get("sky_global_shoulder", 4.0)
             x = x / np.power(1 + np.power(x, n), 1 / n)  # soft shoulder into white
             Yg = tonemap.srgb_encode(x)
             w = bright * p["sky_global"]
             Yd = Yd * (1 - w) + Yg * w
             info["sky_global_ref"] = round(ref, 4)
-            info["sky_global_gain"] = round(gain * ref / p.get("sky_global_white", 0.60), 3)
             w_view = w
 
     # 4. levels: black point from the image (Blacks slider to the clipping point);

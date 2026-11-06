@@ -268,7 +268,9 @@ def edit_bracket(spec: dict) -> dict:
             p["sky_dome"] = None
             p["sky_gradient"] = None
         edits = spec.get("edits") or {}
-        p["keep_boxes"] = edits.get("keep", [])
+        # people the reviewer kept or removed are settled: not flagged again (the
+        # people check runs on the photo before the reviewer's removals are made)
+        p["keep_boxes"] = edits.get("keep", []) + edits.get("remove", [])
         retouch = [{"box": b, "mode": "person"} for b in edits.get("remove", [])]
         retouch += [{"poly": poly} for poly in edits.get("brush", [])]
         if retouch:
